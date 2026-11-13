@@ -1,0 +1,18 @@
+{
+  "name": "deck-commander-multidevice",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-device MCP router for Steam Deck and Windows, with verified transfers",
+  "scripts": {
+    "start": "node gateway.mjs",
+    "check": "node --check gateway.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@wonderwhy-er/desktop-commander": "0.3.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

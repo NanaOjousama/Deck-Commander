@@ -1,0 +1,4 @@
+@echo off
+REM Template only. Adapt the location of Node and your Desktop Commander install.
+REM Do not echo tokens or credentials to stdout: it is used by MCP stdio.
+node "C:\DeckCommander\node_modules\@wonderwhy-er\desktop-commander\dist\index.js" --no-onboarding

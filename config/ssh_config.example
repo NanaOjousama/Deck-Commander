@@ -1,0 +1,18 @@
+# TEMPLATE ONLY: create private ssh_config during fingerprint-verified pairing.
+# This file contains no working credentials or trusted host fingerprints.
+Host dc-windows
+    HostName YOUR_WINDOWS_LAN_HOSTNAME_OR_IP
+    User YOUR_WINDOWS_USERNAME
+    Port 22
+    IdentityFile ~/.local/share/deck-commander-multidevice/keys/windows_ed25519
+    UserKnownHostsFile ~/.local/share/deck-commander-multidevice/known_hosts
+    IdentitiesOnly yes
+    BatchMode yes
+    StrictHostKeyChecking yes
+    ConnectionAttempts 1
+    ConnectTimeout 6
+    ServerAliveInterval 10
+    ServerAliveCountMax 3
+    ControlMaster auto
+    ControlPath ~/.ssh/dc-mux-%C
+    ControlPersist 120s

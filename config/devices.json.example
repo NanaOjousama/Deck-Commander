@@ -1,0 +1,6 @@
+{
+  "devices": {
+    "steamdeck": {"enabled": true},
+    "windows": {"enabled": false, "host": "", "user": "", "port": 22}
+  }
+}
