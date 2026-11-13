@@ -14,6 +14,12 @@ An audit of a recent 1,000-call history found 187 `read_process_output` checks, 
 
 A smart-wait gateway adjustment was tested on Steam Deck and Windows: routine short `start_process`/offset-zero output-read waits were extended, with a ten-second cap and exemptions for some interactive commands. The five-second command completed in one tool call in the validation. This trades a possibly longer first wait for fewer repeated checks. Process IDs remained available for long-running work.
 
+## November 12 — AI efficiency baseline (Issue #2)
+
+Created a synthetic, repeatable MCP-client harness (`benchmarks/run.mjs`) and ran five repetitions of 13 workflow variants against a separately launched gateway, without changing the live tunnel. **65/65 task checks passed.** Metrics include tool calls per successful task, returned text bytes, serialized response bytes, elapsed time, errors, empty polls and duplicate reads. The full [initial benchmark report](../benchmarks/BASELINE_2026-11-12.md) includes p50/p95 results and counterexamples where compact command wrappers were slower.
+
+Observed an eight-file inspection using eight separate reads versus one bounded summary command; also saw large reductions in returned data for log-tail and file-count tasks. Smart Wait reduced delayed-process polls. These are MCP-client strategy comparisons, **not** measured ChatGPT platform token savings or an already-deployed before/after change. Raw task receipts remain local and excluded by `.gitignore`. Next step: investigate a read-only native batching or compact-inspection prototype, and explicitly instrument additional backend traffic in isolation.
+
 ## November 12 — Local installation housekeeping
 
 After the sanitized GitHub source release, the private Steam Deck working directory was reorganized for maintainability. **108 historical items** were moved into dedicated documentation, backups, logs, state, test and archive folders; the original 123 top-level items were reduced to 21 immediately after the moves. Live gateway/router files, pairing configuration, SSH keys and three recovery-journal directories retained their operational paths.

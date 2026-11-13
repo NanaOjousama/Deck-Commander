@@ -32,3 +32,5 @@ __pycache__/
 *.pyc
 *.zip
 .DS_Store
+# Keep per-task private benchmarks local
+benchmarks/results/

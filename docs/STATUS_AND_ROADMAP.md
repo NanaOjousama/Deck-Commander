@@ -25,3 +25,10 @@
 ### Acceptance rules
 
 Each change should have an offline regression test, an isolated integration test where feasible, a before/after measurement, a non-destructive rollback, and documented limits. Do not spend setup complexity on an optimization without evidence of user benefit.
+
+## AI efficiency benchmark — Issue #2 (initial baseline)
+
+The [first repeatable synthetic MCP-client benchmark](../benchmarks/BASELINE_2026-11-12.md) has been run: 13 strategies × 5 repetitions, all 65 task results passed. It measures client-facing tool calls, response UTF-8 bytes, response serialization size, latency p50/p95, failures, empty polls and repeated file reads. It **does not** expose true ChatGPT token counts or internal gateway→backend/SSH subprocess totals.
+
+Initial evidence: an eight-file narrow review can be summarized in one call rather than eight, while a one-line log answer can return 136 bytes instead of the entire 22 KB log. However, compact subprocess-based directory counting was **slower** than native listing. **No live plugin optimization has been deployed from this benchmark yet.** Next: benchmark safe native batching/compact response prototypes, freshness-aware reads, and add backend instrumentation before choosing a deployment.
+
