@@ -14,6 +14,14 @@ An audit of a recent 1,000-call history found 187 `read_process_output` checks, 
 
 A smart-wait gateway adjustment was tested on Steam Deck and Windows: routine short `start_process`/offset-zero output-read waits were extended, with a ten-second cap and exemptions for some interactive commands. The five-second command completed in one tool call in the validation. This trades a possibly longer first wait for fewer repeated checks. Process IDs remained available for long-running work.
 
+## November 12 — Local installation housekeeping
+
+After the sanitized GitHub source release, the private Steam Deck working directory was reorganized for maintainability. **108 historical items** were moved into dedicated documentation, backups, logs, state, test and archive folders; the original 123 top-level items were reduced to 21 immediately after the moves. Live gateway/router files, pairing configuration, SSH keys and three recovery-journal directories retained their operational paths.
+
+A private local manifest records the original/new paths and SHA-256 fingerprints. Two regression-test import paths were adjusted for their new `tests/` location. **All 38 offline transfer tests passed**, and fresh Steam Deck and Windows connectivity checks passed. No personal project files, network configuration or live secrets were changed or uploaded.
+
+The **private** organizational layout and move manifest remain on the Steam Deck. The GitHub repository continues to contain only reviewed sanitized source, setup templates, CI tests and general development history.
+
 ## November 12 — Reconnection and network robustness
 
 - **Session recovery:** on Windows MCP transport closure, the stale client is discarded; the next explicit request reconnects. Interrupted commands are **not** automatically replayed.
