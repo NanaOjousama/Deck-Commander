@@ -1,5 +1,7 @@
 # Status and roadmap
 
+> **Current canonical status (2026-11-16):** [Project Handoff](PROJECT_HANDOFF.md) and [Unified Engineering Plan](UNIFIED_ENGINEERING_PLAN.md) override the historical priority order below. This document retains older milestones for evidence, not as an instruction to restart earlier work.
+
 **As of November 12, 2026** — sanitized public source snapshot; the separately operated private gateway was verified active with 29 tools and zero pending transfer journals after final testing.
 
 | Area | Current evidence | Remaining work |
@@ -14,7 +16,7 @@
 | Byte-level resume | Real 2 MiB uploads/downloads from 128 KiB partials passed | Larger-scale interruption tests and bounded long-running execution |
 | GitHub distribution | Sanitized source, tests and docs | Build a guided installer and a secure configuration migration path |
 
-## Recommended next development order
+## Historical next development order (superseded by 2026-11-16 handoff)
 
 1. **Long-running transfers:** design a detached, bounded job manager with explicit cancellation, progress reports, and recovery after gateway timeout. Avoid blind automatic retries or invisible background work.
 2. **Large-folder throughput:** benchmark batches and reduce excessive per-file PowerShell and SFTP process creation while retaining SHA-256 verification and no-clobber guarantees.

@@ -19,6 +19,7 @@ A multi-device [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 
 
 | Document | Purpose |
 |---|---|
+| [Project handoff](docs/PROJECT_HANDOFF.md) | **START HERE** — verified current status, decisions, next action, new-chat resumption | 
 | [Development log](docs/DEVELOPMENT_LOG.md) | Chronological record of what changed, tests, and benchmarks |
 | [Current status & roadmap](docs/STATUS_AND_ROADMAP.md) | What works, known limits, and upcoming work |
 | [Architecture](docs/ARCHITECTURE.md) | Gateway, SSH backend, transfer journal, and call flow |

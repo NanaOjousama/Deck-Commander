@@ -1,6 +1,6 @@
 # Deck Commander — unified engineering plan
 
-**Updated November 15, 2026.** This is the **single tracking plan** that preserves **all** previously proposed improvements. It supersedes *priority order* in older notes, not their technical evidence. Detailed work continues under [Issue #2: AI efficiency](https://github.com/NanaOjousama/Deck-Commander/issues/2) and [Issue #1: transfer reliability](https://github.com/NanaOjousama/Deck-Commander/issues/1). Read alongside the [minimal-work contract](AI_EFFICIENCY_CONTRACT.md).
+**Updated November 15, 2026.** For the verified *current* runtime state and immediate next task, start with the [canonical project handoff](PROJECT_HANDOFF.md). This is the **single tracking plan** that preserves **all** previously proposed improvements. It supersedes *priority order* in older notes, not their technical evidence. Detailed work continues under [Issue #2: AI efficiency](https://github.com/NanaOjousama/Deck-Commander/issues/2) and [Issue #1: transfer reliability](https://github.com/NanaOjousama/Deck-Commander/issues/1). Read alongside the [minimal-work contract](AI_EFFICIENCY_CONTRACT.md).
 
 ## The goal
 

@@ -1,5 +1,13 @@
 # Development log — Deck Commander
 
+## November 16 — source-of-truth and live-state audit
+
+Audited the connected Steam Deck installation read-only: gateway active with zero reported restarts, Deck and Windows connections available, 38 offline regression tests passing. All three pending-transfer commands returned **zero**; folder/byte-resume journal directories contain retained `.lock` files rather than unfinished transfer receipts. Did **not** delete locks, restart the gateway, change Colab, or inspect other projects.
+
+Reviewed GitHub's unified plan, efficiency contract, both issues, the existing synthetic benchmark and current CI. Found a documentation split: GitHub had the long-term plan, while the local Deck `docs/` directory held only organization guides. Added [canonical project handoff](PROJECT_HANDOFF.md) and linked it from README, roadmap and unified plan, with a sanitized local copy for offline reference. Historical priority lists are identified as historical. Next action is **Phase 1B isolated benchmark instrumentation + bounded read-only batch proof**, with **independent long-running job safety designed in parallel**. All earlier roadmap work remains in scope.
+
+
+
 ## November 15 — Scope clarified: chat context, tool limits, and unnecessary background work
 
 The owner clarified that the engineering goal is not just faster file transfers: **reduce AI-facing tool calls, reduce returned data that pressures chat context, and avoid redundant execution or idle activity**. A Colab job remained concerning when an earlier chat lost the ability to continue tool control. Recovery must not assume a conversation stays open or a worker stops automatically when it closes.
