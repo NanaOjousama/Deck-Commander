@@ -40,3 +40,9 @@ The live gateway's 29 tool definitions measured approximately **65,896 JSON UTF-
 
 **Next technical task:** instrument actual interaction layers in an isolated gateway and benchmark a read-only, bounded, compact batch inspection prototype. Then design safe job receipts and independently enforceable stop/cancel lifecycles for remote GPU jobs. No live feature should be added merely for the sake of feature count or background activity.
 
+## Unified master plan — complete scope retained
+
+The [unified engineering plan](UNIFIED_ENGINEERING_PLAN.md) explicitly **keeps all previously proposed work**, even when recent user messages focus on call limits, context limits, or waste. It combines AI efficiency, compact outputs, **independently bounded execution**, durable receipts, new-chat recovery, checkpoint/stop/cancel, long-running transfers, network resilience, regression tests, and safe GitHub publication.
+
+**Priority:** develop the job-safety contract **alongside** the Phase 1B benchmark and compact read-only inspection prototype. Independent execution must not be dropped or pushed indefinitely behind token optimization. See [Issue #1](https://github.com/NanaOjousama/Deck-Commander/issues/1) and [Issue #2](https://github.com/NanaOjousama/Deck-Commander/issues/2). The plan is recorded; **none of its undeployed features should be represented as already implemented**.
+

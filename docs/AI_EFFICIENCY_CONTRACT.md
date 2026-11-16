@@ -48,3 +48,8 @@ The gateway cannot inspect ChatGPT's internal token accounting or bypass platfor
 ## Definition of done
 
 Compare representative workflows including short command, eight-file review, bounded log query, large folder metadata, delayed process, offline Windows, interrupted file transfer and a bounded synthetic long-running job. Report success rate, calls per safe outcome, returned bytes per safe outcome, latency p50/p95 and failures. Record backend/SSH counts separately. Show that tool-call reduction does not conceal failures, lose needed evidence or cause extra work in the background. **Do not invent a guaranteed percentage reduction in ChatGPT chat-limit use.**
+
+## Scope-preservation note
+
+The user's mention of a new efficiency goal **does not revoke earlier requested improvements**. Keep independent long-running execution, remote-worker/provider-side time limits, checkpointing, durable job receipts, explicit progress/status/cancel/recovery, connection resilience, safe file transfers, and verified GitHub history in scope. Workstreams and ordering are consolidated in the [Unified Engineering Plan](UNIFIED_ENGINEERING_PLAN.md). No background worker or GPU stopping capability is considered implemented until explicitly tested and deployed.
+
