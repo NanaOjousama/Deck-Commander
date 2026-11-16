@@ -32,3 +32,11 @@ The [first repeatable synthetic MCP-client benchmark](../benchmarks/BASELINE_202
 
 Initial evidence: an eight-file narrow review can be summarized in one call rather than eight, while a one-line log answer can return 136 bytes instead of the entire 22 KB log. However, compact subprocess-based directory counting was **slower** than native listing. **No live plugin optimization has been deployed from this benchmark yet.** Next: benchmark safe native batching/compact response prototypes, freshness-aware reads, and add backend instrumentation before choosing a deployment.
 
+## AI context and minimal-work requirements — November 15, 2026
+
+The user's central constraints are **avoid ChatGPT context and tool-call exhaustion** and **don't spend tool calls or compute on needless background work**. A previously active Colab session could not be supervised after the chat/tool limit was reached. This raises the priority of *recoverable, independently bounded remote jobs*, not merely shorter responses. See the [AI Efficiency and Minimal-Work Contract](AI_EFFICIENCY_CONTRACT.md) and [Issue #2](https://github.com/NanaOjousama/Deck-Commander/issues/2).
+
+The live gateway's 29 tool definitions measured approximately **65,896 JSON UTF-8 bytes** on November 15. This does **not** equal measured ChatGPT context/token cost. No periodic timer was found in the gateway's static source inspection; other services and Colab were not audited.
+
+**Next technical task:** instrument actual interaction layers in an isolated gateway and benchmark a read-only, bounded, compact batch inspection prototype. Then design safe job receipts and independently enforceable stop/cancel lifecycles for remote GPU jobs. No live feature should be added merely for the sake of feature count or background activity.
+

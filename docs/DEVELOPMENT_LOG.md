@@ -1,5 +1,13 @@
 # Development log — Deck Commander
 
+## November 15 — Scope clarified: chat context, tool limits, and unnecessary background work
+
+The owner clarified that the engineering goal is not just faster file transfers: **reduce AI-facing tool calls, reduce returned data that pressures chat context, and avoid redundant execution or idle activity**. A Colab job remained concerning when an earlier chat lost the ability to continue tool control. Recovery must not assume a conversation stays open or a worker stops automatically when it closes.
+
+The live gateway's exposed 29-tool catalog was measured at **65,896 bytes of serialized JSON**. This is an interface-size observation, not a direct ChatGPT token count. Static inspection did not reveal a periodic gateway `setInterval` loop, but it does not establish that the entire service and Colab do no idle work. Added a [minimal-work requirements contract](AI_EFFICIENCY_CONTRACT.md) with scope boundaries, measurable criteria and a staged plan; the live gateway was not modified.
+
+
+
 This is the running **human-readable project record**, assembled on November 12, 2026 from the implementation and test reports. It is intended to make follow-up work easier without exposing machine credentials or private network configuration.
 
 ## November 10 — Two-computer foundation
