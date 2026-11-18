@@ -48,3 +48,7 @@ The [unified engineering plan](UNIFIED_ENGINEERING_PLAN.md) explicitly **keeps a
 
 **Priority:** develop the job-safety contract **alongside** the Phase 1B benchmark and compact read-only inspection prototype. Independent execution must not be dropped or pushed indefinitely behind token optimization. See [Issue #1](https://github.com/NanaOjousama/Deck-Commander/issues/1) and [Issue #2](https://github.com/NanaOjousama/Deck-Commander/issues/2). The plan is recorded; **none of its undeployed features should be represented as already implemented**.
 
+## November 18 — Mobile file delivery follow-up
+
+[Issue #5](https://github.com/NanaOjousama/Deck-Commander/issues/5) records a **distinct practical limitation**: existing PNG files can be read by Deck Commander but aren't reliably visible as attachments in ChatGPT Android. Do not equate tool-returned image content with user delivery. Plan a secure authenticated link or actual chat attachment, preserve exact original file, and verify phone accessibility. This can be investigated independently of Phase 1B, without touching active Colab work.
+

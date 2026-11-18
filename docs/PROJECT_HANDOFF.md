@@ -61,6 +61,12 @@
 
 Correct work must be **completed or safely stopped**; no hidden side effects, indefinite retries, user-project reads, unauthorized paid jobs or speculative background activity. Show before/after calls, returned bytes, latency, failure rates, and a clear rollback. Publish only sanitized evidence. If the optimization is unproven, keep the working gateway unchanged.
 
+## November 18 — Android image delivery problem (not a confirmed gateway execution failure)
+
+An assistant could inspect an existing manga test PNG on the Steam Deck through Deck Commander, but the owner repeatedly saw **"Couldn't open app"** and no displayed image in ChatGPT Android, including after a smaller preview. Read-only testing confirmed `read_file` returned a genuine MCP `image/png` content block, but **that does not establish an Android-rendered attachment**. The source test image is intact; do **not** regenerate it or spend Colab/GPU credits to fix a delivery issue. See **[Issue #5 — mobile image/file delivery](https://github.com/NanaOjousama/Deck-Commander/issues/5)**.
+
+**Priority:** user-facing delivery of a real attachment or authenticated private file link, with visible Android access confirmation; not repeated image tool previews or a bare Steam Deck path. Do not change the live gateway, Colab job, public tunnel or credentials just to experiment. Existing core file/process controls are working. Treat the client/app widget cause as **hypothesis**, not verified root cause. This capability gap should be resolved before relying on Deck Commander for mobile receipt of graphics.
+
 ## New-chat resumption instruction
 
 > Read `docs/PROJECT_HANDOFF.md` in the Deck Commander GitHub repository first, then `docs/UNIFIED_ENGINEERING_PLAN.md` and Issues #1/#2. Verify today's actual gateway/test state before changing code. Continue **Phase 1B isolated instrumentation + compact inspection benchmark**, and design **independently bounded job supervision** in parallel. Do not touch active Colab sessions, unrelated projects, or the live gateway until a safe implementation has passed tests and has a rollback.
