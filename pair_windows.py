@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(os.environ.get("DC_HOME", Path.home() / ".local/share/deck-commander-multidevice"))
@@ -51,39 +52,70 @@ def main():
     match = re.search(r"SHA256:[A-Za-z0-9+/]+", fp)
     if not match or match.group(0) != v.host_fingerprint:
         raise ValueError("HOST KEY FINGERPRINT MISMATCH. No configuration was changed.")
-    # The fingerprint matches the value read directly from the Windows host.
-    if keylines[0] not in KNOWN.read_text():
-        with KNOWN.open("a") as f:
-            f.write(keylines[0]+"\n")
-    host = "\n".join([
-        "Host dc-windows", "    HostName " + v.host, "    User " + v.user,
-        "    Port " + str(v.port), "    IdentityFile " + str(KEY),
-        "    UserKnownHostsFile " + str(KNOWN), "    IdentitiesOnly yes",
-        "    BatchMode yes", "    StrictHostKeyChecking yes",
-        "    ConnectTimeout 6", "    ServerAliveInterval 10",
-        "    ConnectionAttempts 1", "    LogLevel ERROR", ""
-    ])
-    tmp = SSHCONF.with_suffix(".tmp")
-    tmp.write_text(host)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, SSHCONF)
-    probe = base64.b64encode("[Console]::Write($env:COMPUTERNAME)".encode("utf-16-le")).decode()
-    # Verify passwordless login BEFORE allowing routing to this machine.
+    # Do not touch active pairing files until the proposed connection has
+    # authenticated successfully. A failed attempt must leave existing pairing
+    # configuration unchanged.
+    if any(path.is_symlink() for path in (KNOWN, SSHCONF, CONFIG)):
+        raise ValueError("Pairing files may not be symlinks")
+    known_text = KNOWN.read_text(encoding="utf-8") if KNOWN.exists() else ""
+    devices = json.loads(CONFIG.read_text(encoding="utf-8"))
+    if not isinstance(devices.get("devices", {}).get("windows"), dict):
+        raise ValueError("Windows device configuration is missing")
+    if keylines[0] not in known_text.splitlines():
+        if known_text and not known_text.endswith("\n"):
+            known_text += "\n"
+        known_text += keylines[0] + "\n"
+
+    staged = set()
+
+    def stage(path, content):
+        # mkstemp uses exclusive creation and a private 0600 file.
+        fd, filename = tempfile.mkstemp(prefix="." + path.name + ".", dir=path.parent)
+        tmp = Path(filename)
+        staged.add(tmp)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        return tmp
+
+    def ssh_config(known_path):
+        return "\n".join([
+            "Host dc-windows", "    HostName " + v.host, "    User " + v.user,
+            "    Port " + str(v.port), "    IdentityFile " + str(KEY),
+            "    UserKnownHostsFile " + str(known_path), "    IdentitiesOnly yes",
+            "    BatchMode yes", "    StrictHostKeyChecking yes",
+            "    ConnectTimeout 6", "    ServerAliveInterval 10",
+            "    ConnectionAttempts 1", "    LogLevel ERROR", ""
+        ])
+
     try:
-        answer = run(["ssh", "-T", "-F", str(SSHCONF), "dc-windows",
+        # SSH verifies the candidate against a temporary known_hosts and
+        # ssh_config. Neither the old trusted host list nor router is altered.
+        pending_known = stage(KNOWN, known_text)
+        probe_ssh = stage(SSHCONF, ssh_config(pending_known))
+        probe = base64.b64encode(
+            "[Console]::Write($env:COMPUTERNAME)".encode("utf-16-le")
+        ).decode()
+        answer = run(["ssh", "-T", "-F", str(probe_ssh), "dc-windows",
                       "powershell.exe", "-NoProfile", "-NonInteractive",
                       "-EncodedCommand", probe], timeout=16)
-    except Exception:
-        print("Verified host key, but Windows key login is not ready. Windows remains DISABLED.")
-        raise
-    devices = json.loads(CONFIG.read_text())
-    devices["devices"]["windows"].update(
-        {"enabled": True, "host": v.host, "user": v.user, "port": v.port}
-    )
-    tmp = CONFIG.with_suffix(".tmp")
-    tmp.write_text(json.dumps(devices, indent=2)+"\n")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, CONFIG)
+
+        devices["devices"]["windows"].update(
+            {"enabled": True, "host": v.host, "user": v.user, "port": v.port}
+        )
+        pending_ssh = stage(SSHCONF, ssh_config(KNOWN))
+        pending_config = stage(CONFIG, json.dumps(devices, indent=2) + "\n")
+        # Each replace is atomic. All are staged after successful verification;
+        # multi-file commit/rollback is a follow-up release-hardening task.
+        for temp, target in ((pending_known, KNOWN),
+                             (pending_ssh, SSHCONF),
+                             (pending_config, CONFIG)):
+            os.replace(temp, target)
+            staged.discard(temp)
+    finally:
+        for temp in staged:
+            temp.unlink(missing_ok=True)
     print("PAIRING SUCCESSFUL: windows:", answer.strip())
     print("Explicit device routing and hashed file transfers are now enabled.")
 
