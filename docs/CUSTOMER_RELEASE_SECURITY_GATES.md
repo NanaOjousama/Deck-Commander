@@ -22,7 +22,7 @@ One personally owned Linux host (Steam Deck or regular Linux laptop) running the
 |---|---|---|
 | A — Trusted client access | Document the authentication boundary, device ownership/consent, account/session revocation, and network threat model. Test refusal of unauthorized connections. Never expose raw MCP command execution publicly. | Open |
 | B — Principle of least privilege | Safe default installation under a dedicated OS account or isolated environment where appropriate; clear warnings that command/file guardrails are not isolation. No privilege escalation by default. | Open |
-| C — Pairing / secrets | Fingerprint-verified SSH setup; fail closed; private config/key permissions; denied authentication leaves previous config intact; failed installation is recoverable. | Partial: staging and offline tests in development branch |
+| C — Pairing / secrets | Fingerprint-verified SSH setup; fail closed; private config/key permissions; denied authentication leaves previous config intact; failed installation is recoverable. | Partial: pre-authentication staging, write-failure rollback, and offline failure-injection tests in development branch |
 | D — Dependency security and licensing | Commit a reproducible lockfile, generate a full transitive dependency/license inventory and notices, vulnerability scans, and disclose or explicitly handle upstream installation telemetry. Keep MIT copyright notice. | Open |
 | E — Installer / uninstaller | Guided setup using customer-owned credentials, clear permission prompts, idempotent reruns, rollback and safe uninstall; no default public port exposure; no accidental credential logging. | Open |
 | F — Transfer reliability | Preserve SHA-256 and no-overwrite semantics; test interruption, crash consistency, symlinks/reparse points, disk-full, remote disconnect, path safety, and child-process cancellation. | Partial: 38 original offline tests |
@@ -32,7 +32,7 @@ One personally owned Linux host (Steam Deck or regular Linux laptop) running the
 
 ## Immediate implementation sequence
 
-1. **Safe Windows pairing staging:** Validate the fingerprint and authenticate through disposable SSH configuration before replacing the live pairing files. Add success/failure tests. This still needs crash/partial multi-file commit rollback review; staging alone is not a complete transaction.
+1. **Safe Windows pairing staging:** Validate the fingerprint and authenticate through disposable SSH configuration before replacing the live pairing files. Add success/failure tests. Expected multi-file write failures now attempt restoring previous files, with injected-failure tests. **Sudden crash/power-loss consistency and failed-rollback recovery remain open**; neither staging nor exception rollback is a durable multi-file transaction.
 2. **Reproducibility:** Match runtime requirement to the exact upstream package, add lockfile and dependency/license/SBOM tooling, then evaluate installation telemetry.
 3. **Threat model and installation permissions:** Decide which trusted-client authenticator and trust boundary the *local gateway* owns vs which is delegated to the separate tunnel/connector. Do not invent a homemade authentication layer unless needed.
 4. **Fresh-install prototype:** Test non-Steam-Deck Linux + Windows against disposable machines/VMs; document manual onboarding gaps before writing a guided installer.
