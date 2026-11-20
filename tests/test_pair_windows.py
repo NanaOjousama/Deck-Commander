@@ -111,6 +111,67 @@ class PairWindowsTests(unittest.TestCase):
                              x.name.startswith(".known_hosts.")
                              for x in self.root.iterdir()))
 
+    def test_failure_at_each_commit_step_restores_previous_files(self):
+        original_replace = pair.os.replace
+        for failing_step in (1, 2, 3):
+            with self.subTest(failing_step=failing_step):
+                calls = [0]
+
+                def fail_once(src, dst):
+                    calls[0] += 1
+                    if calls[0] == failing_step:
+                        raise OSError("injected replacement failure")
+                    return original_replace(src, dst)
+
+                with patch.object(pair.os, "replace", side_effect=fail_once):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "previous configuration restored"
+                    ):
+                        self.pair_with(self.fake_run)
+                self.assertEqual(self.snapshot(), self.before)
+                self.assertEqual(
+                    sorted(x.name for x in self.root.iterdir()),
+                    ["devices.json", "keys", "known_hosts", "ssh_config"],
+                )
+
+    def test_failed_commit_with_no_original_known_hosts_removes_new_file(self):
+        self.known_hosts.unlink()
+        self.before = self.snapshot()
+        original_replace = pair.os.replace
+        calls = [0]
+
+        def fail_after_known_hosts(src, dst):
+            calls[0] += 1
+            if calls[0] == 2:
+                raise OSError("injected ssh config replacement failure")
+            return original_replace(src, dst)
+
+        with patch.object(pair.os, "replace", side_effect=fail_after_known_hosts):
+            with self.assertRaisesRegex(RuntimeError, "previous configuration restored"):
+                self.pair_with(self.fake_run)
+        self.assertEqual(self.snapshot(), self.before)
+        self.assertFalse(self.known_hosts.exists())
+        self.assertEqual(
+            sorted(x.name for x in self.root.iterdir()),
+            ["devices.json", "keys", "ssh_config"],
+        )
+
+    def test_rollback_failure_is_reported_not_silenced(self):
+        original_replace = pair.os.replace
+        calls = [0]
+
+        def fail_commit_then_rollback(src, dst):
+            calls[0] += 1
+            if calls[0] in (2, 3):
+                raise OSError("injected failure")
+            return original_replace(src, dst)
+
+        with patch.object(pair.os, "replace", side_effect=fail_commit_then_rollback):
+            with self.assertRaisesRegex(RuntimeError, "ROLLBACK INCOMPLETE"):
+                self.pair_with(self.fake_run)
+        # The device is not enabled because config is written last.
+        self.assertEqual(self.config.read_bytes(), self.before[str(self.config)])
+
     def test_missing_known_hosts_is_created_only_after_success(self):
         self.known_hosts.unlink()
         self.before = self.snapshot()
