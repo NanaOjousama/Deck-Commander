@@ -69,11 +69,13 @@ def main():
     staged = set()
 
     def stage(path, content):
-        # mkstemp uses exclusive creation and a private 0600 file.
+        # Keep candidate and rollback data in private, same-directory files.
         fd, filename = tempfile.mkstemp(prefix="." + path.name + ".", dir=path.parent)
         tmp = Path(filename)
         staged.add(tmp)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        with os.fdopen(fd, "wb") as f:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
@@ -106,13 +108,42 @@ def main():
         )
         pending_ssh = stage(SSHCONF, ssh_config(KNOWN))
         pending_config = stage(CONFIG, json.dumps(devices, indent=2) + "\n")
-        # Each replace is atomic. All are staged after successful verification;
-        # multi-file commit/rollback is a follow-up release-hardening task.
-        for temp, target in ((pending_known, KNOWN),
-                             (pending_ssh, SSHCONF),
-                             (pending_config, CONFIG)):
-            os.replace(temp, target)
-            staged.discard(temp)
+        # Snapshot every existing target before changing any of them. This
+        # restores the exact previous bytes if a later os.replace fails. Only
+        # the last file (devices.json) enables routing to the new target.
+        replacements = ((pending_known, KNOWN),
+                        (pending_ssh, SSHCONF),
+                        (pending_config, CONFIG))
+        backups = {
+            target: stage(target, target.read_bytes()) if target.exists() else None
+            for _, target in replacements
+        }
+        changed = []
+        try:
+            for temp, target in replacements:
+                os.replace(temp, target)
+                staged.discard(temp)
+                changed.append(target)
+        except OSError as original_error:
+            rollback_errors = []
+            for target in reversed(changed):
+                try:
+                    backup = backups[target]
+                    if backup is None:
+                        target.unlink(missing_ok=True)
+                    else:
+                        os.replace(backup, target)
+                        staged.discard(backup)
+                except OSError as error:
+                    rollback_errors.append(f"{target.name}: {error}")
+            if rollback_errors:
+                raise RuntimeError(
+                    "PAIRING ROLLBACK INCOMPLETE; inspect device configuration "
+                    "before using it: " + "; ".join(rollback_errors)
+                ) from original_error
+            raise RuntimeError(
+                "Pairing file update failed; previous configuration restored"
+            ) from original_error
     finally:
         for temp in staged:
             temp.unlink(missing_ok=True)
