@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Offline failure-injection tests: only temporary fake Deck/Windows files."""
+import base64
 import hashlib
 import importlib.util
 import os
@@ -14,6 +15,7 @@ import unittest
 HERE=Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE))
 import transfer_reliability as safe
+import router as actual_router
 
 def sha(p):
     h=hashlib.sha256()
@@ -38,8 +40,8 @@ class FakeBackend:
         assert '/' not in rel and '..' not in rel
         return self.remoteroot/rel
     def quote_ps(self,p):
-        if not p or '\n' in p or '\r' in p or '\0' in p:raise ValueError('Invalid path')
-        return "'"+str(p).replace("'","''")+"'"
+        # Use the actual production encoder; avoid hiding a security regression.
+        return actual_router.quote_ps(str(p))
     def remote_exists(self,p):return self.qpath(p).exists()
     def remote_hash(self,p):
         if 'bad_postcommit' in self.controls and self.qpath(p).name=='destination.bin':
@@ -60,8 +62,13 @@ class FakeBackend:
             if 'fail_download' in self.controls:raise OSError('simulated transfer interruption')
         else:raise ValueError(op)
     def powershell(self,script,timeout=60):
-        fields=[x.replace("''","'") for x in re.findall(r"'((?:''|[^'])*)'",script)]
-        fields=[x for x in fields if x!='Stop'] # Ignore the fixed PowerShell preference literal.
+        # Decode the fixed PowerShell Base64 expression without invoking Windows.
+        encoded_paths = re.findall(
+            r"\(\[System\.Text\.Encoding\]::UTF8\.GetString\("
+            r"\[System\.Convert\]::FromBase64String\('([A-Za-z0-9+/=]+)'\)\)\)",
+            script,
+        )
+        fields = [base64.b64decode(v, validate=True).decode('utf-8') for v in encoded_paths]
         if '[System.IO.File]::Move' in script:
             self.actions.append('remote-no-clobber-commit')
             assert len(fields)>=2
