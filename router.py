@@ -51,9 +51,16 @@ def powershell(script, timeout=60):
 
 
 def quote_ps(raw):
-    if not raw or len(raw) > 2048 or any(c in raw for c in "\r\n\0"):
+    """Pass Windows paths to PowerShell as UTF-8 data, not parsed source.
+
+    PowerShell recognizes Unicode typographic quotes as syntax, so escaping
+    only the ASCII apostrophe leaves attacker-controlled paths unsafe.
+    """
+    if not isinstance(raw, str) or not raw or len(raw) > 2048 or any(c in raw for c in "\r\n\0"):
         raise ValueError("Invalid path")
-    return "'" + raw.replace("'", "''") + "'"
+    encoded = base64.b64encode(raw.encode("utf-8")).decode("ascii")
+    return ("([System.Text.Encoding]::UTF8.GetString("
+            "[System.Convert]::FromBase64String('" + encoded + "')))" )
 
 
 def remote_exists(path):

@@ -4,6 +4,14 @@
 
 **Scope:** This document concerns **Deck Commander only** (our self-hosted Steam Deck + Windows MCP gateway). It is **not** a status report for the manga adaptation, Ty, Stardew RNG, or any other project. Never inspect or alter those projects while doing Deck Commander maintenance unless specifically requested.
 
+## Customer-release security workstream (2026-11-20)
+
+The owner approved improving Deck Commander toward a **secure, customer-installable gateway**. Monetization and pricing are explicitly undecided. Work is isolated under the development branch hardening/customer-installation-security and must not alter the private operational gateway or tunnel.
+
+**First concrete change:** Stage Windows SSH pairing inputs and prove fingerprint + successful login before replacing existing configuration; add five offline regression cases (mismatch, denied authentication, success, absent known_hosts, symlink refusal). The branch now also tests rollback from ordinary multi-file write failures (including failure injection), while crash/power-loss recovery remains unresolved. Align the declared Node version with upstream. See [customer release security gates](CUSTOMER_RELEASE_SECURITY_GATES.md) for full acceptance criteria and remaining risks. This is a **draft**, not a deployable release.
+
+**Do not drop prior commitments:** Continue Issue #2 (efficient tool calls and independent bounded job supervision) and Issue #1 (transfer reliability and performance), retaining the canonical Unified Engineering Plan. Security and fresh-install work is an added release-readiness track, not permission to abandon the existing roadmap. Live deployments, paid jobs, and production changes still require explicit authorization.
+
 ## Source-of-truth rules
 
 - **This page is the single canonical *project status and next-action* handoff.** Update it whenever scope, implementation status, key test evidence, priorities or material blockers change.
