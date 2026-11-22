@@ -37,6 +37,9 @@ def run_suite(executable):
     router.run = local_run
     successes = []
     try:
+        print('DIAG_POWERSHELL_VERSION=', router.powershell('[Console]::Write($PSVersionTable.PSVersion.ToString())'), flush=True)
+        print('DIAG_GET_FILEHASH_COMMAND=', router.powershell("[Console]::Write((Get-Command -Name Get-FileHash -ErrorAction SilentlyContinue).Name)"), flush=True)
+        print('DIAG_MODULE_UTIL=', router.powershell('[Console]::Write((Get-Module -ListAvailable Microsoft.PowerShell.Utility | Select-Object -First 1).Name)'), flush=True)
         with tempfile.TemporaryDirectory(prefix='deck-commander-windows-ci-') as temp:
             root = Path(temp) / 'fixture'
             root.mkdir()
