@@ -7,6 +7,8 @@ Checks actual `ssh -T` + production router generated PowerShell and negative
 host-key/authorization checks. Deletes material and closes sshd in finally.
 """
 import base64
+from collections import deque
+from threading import Thread
 import getpass
 import hashlib
 import json
@@ -102,15 +104,18 @@ def run():
         with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as sock:
             sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
         ssh,sshd,server_conf,client_config,known,bad_known,authorized=build(root,port)
-        server_log=root/'sshd_debug.log'
-        server_log.write_text('',encoding='utf8')
-        acl_private(server_log)
-        process=subprocess.Popen([sshd,'-D','-E',str(server_log),'-f',str(server_conf)],
-              stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
+        log_lines=deque(maxlen=120)
+        process=subprocess.Popen([sshd,'-D','-e','-f',str(server_conf)],
+              stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,creationflags=subprocess.CREATE_NO_WINDOW)
+        def drain_server_log():
+            for line in process.stderr:
+                log_lines.append(line.decode('utf-8','replace'))
+        log_thread=Thread(target=drain_server_log,daemon=True)
+        log_thread.start()
         try:
             for _ in range(45):
                 if process.poll() is not None:
-                    err=server_log.read_text(encoding='utf-8',errors='replace')[-1800:] if server_log.exists() else 'no sshd log'
+                    err=''.join(log_lines)[-1800:]
                     raise RuntimeError('sshd exited before loopback test: '+err)
                 try:
                     with socket.create_connection(('127.0.0.1',port),timeout=0.2):break
@@ -120,8 +125,7 @@ def run():
             try:
                 p=call(base+['echo','LOOPBACK_AUTH_OK'])
             except Exception as error:
-                try:server_tail=server_log.read_text(encoding='utf-8',errors='replace')[-3500:]
-                except OSError as log_error:server_tail='cannot inspect sshd log: '+str(log_error)
+                server_tail=''.join(log_lines)[-4500:]
                 raise RuntimeError(str(error)+'; SSHD_LOG_TAIL='+server_tail) from error
             if 'LOOPBACK_AUTH_OK' not in p.stdout.decode('utf8','replace'):
                 raise AssertionError('ssh -T did not execute authorized command')
@@ -161,9 +165,10 @@ def run():
             print('SSH_LOOPBACK_COMPLETE=PASS',flush=True)
         finally:
             process.terminate()
-            try:process.communicate(timeout=6)
+            try:process.wait(timeout=6)
             except subprocess.TimeoutExpired:
-                process.kill();process.communicate(timeout=4)
+                process.kill();process.wait(timeout=4)
+            log_thread.join(timeout=1)
 
 
 if __name__=='__main__':run()
