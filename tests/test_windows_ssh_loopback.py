@@ -103,6 +103,8 @@ def run():
             sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
         ssh,sshd,server_conf,client_config,known,bad_known,authorized=build(root,port)
         server_log=root/'sshd_debug.log'
+        server_log.write_text('',encoding='utf8')
+        acl_private(server_log)
         process=subprocess.Popen([sshd,'-D','-E',str(server_log),'-f',str(server_conf)],
               stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
         try:
@@ -118,7 +120,8 @@ def run():
             try:
                 p=call(base+['echo','LOOPBACK_AUTH_OK'])
             except Exception as error:
-                server_tail=server_log.read_text(encoding='utf-8',errors='replace')[-3500:] if server_log.exists() else 'no sshd log'
+                try:server_tail=server_log.read_text(encoding='utf-8',errors='replace')[-3500:]
+                except OSError as log_error:server_tail='cannot inspect sshd log: '+str(log_error)
                 raise RuntimeError(str(error)+'; SSHD_LOG_TAIL='+server_tail) from error
             if 'LOOPBACK_AUTH_OK' not in p.stdout.decode('utf8','replace'):
                 raise AssertionError('ssh -T did not execute authorized command')
