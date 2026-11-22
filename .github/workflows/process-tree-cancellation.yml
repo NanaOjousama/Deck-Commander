@@ -1,0 +1,25 @@
+name: Linux transfer process-tree cancellation
+on:
+  push:
+    branches:
+      - security/process-tree-cancellation-20261122
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  transfer-cancellation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install declared dependencies without lifecycle scripts
+        run: npm install --ignore-scripts --no-audit --no-fund --no-package-lock --no-save
+      - name: Syntax and gateway, process-tree, revocation tests
+        run: |
+          node --check gateway.mjs
+          node --check process_tree.mjs
+          node --check transfer_registry.mjs
+          node --test tests/test_gateway_access.mjs tests/test_gateway_runtime.mjs tests/test_process_tree.mjs tests/test_transfer_registry.mjs

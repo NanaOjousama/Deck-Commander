@@ -8,6 +8,8 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { spawn } from 'node:child_process';
+import { runIsolatedProcess } from './process_tree.mjs';
+import { TransferRegistry } from './transfer_registry.mjs';
 import { isIP } from 'node:net';
 import { homedir, networkInterfaces } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -40,6 +42,7 @@ Object.setPrototypeOf(backends, null);
 const deviceNames = Object.keys(backends);
 const server = new Server({name:'deck-commander-multidevice',version:'0.1.0'}, {capabilities:{tools:{}}});
 let toolCache;
+const transferRegistry = new TransferRegistry();
 function log(...msg) { console.error('[multi-device]', ...msg); }
 
 // A powered-off Windows desktop should not generate repeated SSH connection
@@ -112,6 +115,11 @@ async function enforceAccess(device, toolName = undefined) {
   requireDeviceName(device);
   try { assertDeviceEnabled(device, deviceConfigFile, toolName, requireToolAllowlist); }
   catch (err) {
+    // Device revoked or insecure policy: cancel in-flight gateway-owned
+    // transfer trees as well as preventing new dispatch. This cannot cancel
+    // commands already started by a separate Windows SSH server.
+    transferRegistry.reconcile((target,activeTool)=>
+      assertDeviceEnabled(target,deviceConfigFile,activeTool,requireToolAllowlist));
     const b = backends[device];
     // Drop a cached Windows connection as soon as revocation is observed.
     // This closes the transport. It does not promise to cancel a remote
@@ -241,25 +249,24 @@ async function exposedTools() {
 }
 
 async function invokeRouter(args, folder=false, resumable=false) {
-  return await new Promise((resolve,reject) => {
-    const action = resumable ? 'resumable-copy' : (folder ? 'folder-copy' : 'copy');
-    const cliArgs = [router,action,
-      '--from-device',args.source_device,'--source',args.source_path,
-      '--to-device',args.destination_device,'--destination',args.destination_path];
-    if((folder || resumable) && args.resume===true) cliArgs.push('--resume');
-    const c = spawn('/usr/bin/python3', cliArgs,{stdio:['ignore','pipe','pipe']});
-    let stdout='',stderr='';
-    let settled=false;
-    const timer=setTimeout(() => {c.kill('SIGKILL');fail(Error('Copy timed out after 5 minutes'));},310000);
-    function fail(err){if(settled)return;settled=true;clearTimeout(timer);reject(err);}
-    c.stdout.on('data',b=>{stdout+=b; if(stdout.length>20000)c.kill();});
-    c.stderr.on('data',b=>{stderr+=b; if(stderr.length>20000)c.kill();});
-    c.on('error',fail);
-    c.on('exit',code => {if(settled)return;clearTimeout(timer);settled=true;
-      if(code!==0) reject(Error(stderr.trim() || 'Transfer failed with exit '+code));
-      else resolve(stdout.trim());
+  const action = resumable ? 'resumable-copy' : (folder ? 'folder-copy' : 'copy');
+  const cliArgs = [router,action,
+    '--from-device',args.source_device,'--source',args.source_path,
+    '--to-device',args.destination_device,'--destination',args.destination_path];
+  if((folder || resumable) && args.resume===true) cliArgs.push('--resume');
+  const toolName = resumable ? 'copy_resumable_file_between_devices' :
+    (folder ? 'copy_folder_between_devices' : 'copy_file_between_devices');
+  const devices=[args.source_device,args.destination_device];
+  const result = await transferRegistry.run(devices, toolName, async signal => {
+    // Authorize the registered operation at the final spawn boundary.
+    for(const d of devices) await enforceAccess(d,toolName);
+    return await runIsolatedProcess('/usr/bin/python3',cliArgs,{
+      // The entire locally-started Python/SSH/SFTP process group is bounded.
+      // The 5-minute operation envelope retains a 10-second safety margin.
+      timeoutMs:310000,graceMs:300,maxOutputBytes:20000,signal
     });
   });
+  return result.stdout;
 }
 server.setRequestHandler(ListToolsRequestSchema, async () => ({tools:await exposedTools()}));
 server.setRequestHandler(CallToolRequestSchema, async request => {
@@ -365,6 +372,8 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
 // Best-effort event-driven shutdown for idle cached sessions. Request-time
 // checks above are authoritative even if fs.watch misses an event.
 watchDeviceRevocation(deviceConfigFile, async () => {
+  transferRegistry.reconcile((target,activeTool)=>
+    assertDeviceEnabled(target,deviceConfigFile,activeTool,requireToolAllowlist));
   for (const device of deviceNames) {
     try { await enforceAccess(device); }
     catch { /* A revoked device has been disconnected. */ }
@@ -372,6 +381,10 @@ watchDeviceRevocation(deviceConfigFile, async () => {
 }, error => log('device config watch unavailable or failed:', error?.message || String(error)));
 
 process.on('SIGTERM',async()=>{
+  transferRegistry.abortAll();
+  // Await bounded termination of gateway-owned transfer process groups before
+  // exiting. Upstream Desktop Commander detached commands are not controlled.
+  await transferRegistry.drain();
   for (const d of deviceNames) await backends[d].client?.close().catch(()=>{});
   process.exit(0);
 });
