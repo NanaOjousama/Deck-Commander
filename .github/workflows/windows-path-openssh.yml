@@ -1,0 +1,23 @@
+name: Windows OpenSSH and long-path probes
+on:
+  push:
+    branches:
+      - ci/windows-validation-20261121
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-probe:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Windows PowerShell 5.1 — OpenSSH inventory and long-path matrix
+        shell: powershell
+        run: python tests/test_windows_openssh_longpath.py --shell powershell.exe
+      - name: PowerShell 7 — OpenSSH inventory and long-path matrix
+        shell: pwsh
+        run: python tests/test_windows_openssh_longpath.py --shell pwsh.exe
