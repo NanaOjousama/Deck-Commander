@@ -9,12 +9,27 @@ permissions:
 jobs:
   windows-probe:
     runs-on: windows-2022
-    timeout-minutes: 12
+    timeout-minutes: 14
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Install OpenSSH Server on disposable runner (no sshd/network listener)
+        shell: powershell
+        timeout-minutes: 6
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $feature = 'OpenSSH.Server~~~~0.0.1.0'
+          $capability = Get-WindowsCapability -Online -Name $feature
+          Write-Output "OPENSSH_SERVER_FEATURE_BEFORE=$($capability.State)"
+          if ($capability.State -ne 'Installed') {
+            Add-WindowsCapability -Online -Name $feature | Out-String | Write-Output
+          }
+          $server = Join-Path $env:SystemRoot 'System32\OpenSSH\sftp-server.exe'
+          Write-Output "OPENSSH_SERVER_BINARY_AVAILABLE=$(Test-Path -LiteralPath $server)"
+          Write-Output 'No sshd service or firewall rule is started by this workflow.'
       - name: Windows PowerShell 5.1 — OpenSSH inventory and long-path matrix
         shell: powershell
         run: python tests/test_windows_openssh_longpath.py --shell powershell.exe

@@ -66,9 +66,9 @@ def test_sftp(root, sftp_client, sftp_server):
     put['hash_ok']=uploaded.is_file() and uploaded.read_bytes()==b'UPLOAD_WITH_BRACKETS'
     intact=all((remote/name).read_bytes()==contents for name,contents in fixture.items())
     result={'get':get,'reget':reget,'put':put,'competing_files_unchanged':intact}
-    # Wrong-file success is an actual integrity defect, never a benign skip.
-    if any(x['exit']==0 and not x['hash_ok'] for x in (get,reget,put)) or not intact:
-        raise AssertionError('Windows SFTP matched/wrote the wrong file: '+repr(result))
+    # Both wrong-file success AND unexpected SFTP failure block this gate.
+    if any(x['exit'] != 0 or not x['hash_ok'] for x in (get,reget,put)) or not intact:
+        raise AssertionError('Windows SFTP bracketed path transfer failed or matched wrong file: '+repr(result))
     return result
 
 
@@ -160,7 +160,8 @@ def main():
                 sftp_result=test_sftp(base,sftp_client,sftp_server)
                 print('SFTP_DIRECT='+json.dumps(sftp_result,ensure_ascii=True),flush=True)
             except Exception as error:
-                print('SFTP_DIRECT_ERROR='+type(error).__name__+': '+str(error)[-400:],flush=True)
+                print('SFTP_DIRECT_ERROR='+type(error).__name__+': '+str(error)[-800:],flush=True)
+                raise
         else:
             print('SFTP_DIRECT_SKIPPED=Windows OpenSSH server/client binary not installed on runner',flush=True)
         path_root=base/'paths'
