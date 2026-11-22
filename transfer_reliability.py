@@ -4,6 +4,7 @@
 No automatic retry of a transfer. Records only active/recovery work in a
 private Steam Deck journal, and never deletes destination/source files.
 """
+import base64
 import json
 import os
 import re
@@ -77,21 +78,89 @@ def pending_transfers(root):
             pending.append({"journal_id": f.stem, "state": "unreadable"})
     return pending
 
+PART_MARKER = ".dc-part-"
+# A uuid4().hex is always 32 lowercase hex characters.
+_SUFFIX_PROBE = "0" * 32
+
+
+# SFTP (see router.sftp) needs an absolute drive path. Double quotes would break
+# the sftp batch quoting; CR/LF/NUL are never valid. Backslashes are accepted and
+# normalized to '/', exactly as router.sftp does.
+_WINDOWS_ABS_RE = re.compile(r'[A-Za-z]:/[^"\x00\r\n]+')
+
+
+def normalize_windows_path(raw):
+    """Strict, pure check of an untrusted Windows path; returns the '/' form.
+
+    No casting: anything that is not already ``str`` (None, int, Path, bytes)
+    is rejected. Accepts ``C:/x`` and ``C:\\x``; rejects relative paths, UNC
+    (``//server/share``), double quotes and CR/LF/NUL. The UTF-8 byte cap and
+    lone-surrogate checks are left to the backend's ``quote_ps`` (see
+    validate_windows_paths).
+    """
+    if not isinstance(raw, str):
+        raise ValueError("Windows path must be text (str), not " + type(raw).__name__)
+    value = raw.replace("\\", "/")
+    if not _WINDOWS_ABS_RE.fullmatch(value):
+        raise ValueError("Windows path must be an absolute drive path such as C:/Users/... "
+                         "without double quotes or control characters")
+    return value
+
+
+def validate_windows_paths(b, *paths):
+    """Fail closed (ValueError) if any Windows path cannot be sent safely.
+
+    Returns the normalized ('/'-separated) paths as a tuple; callers must use
+    the returned values rather than the untrusted originals.
+
+    Callers must pass the *final* generated temporary path (or a same-length
+    probe of it) so a near-limit target cannot pass validation and only fail
+    after bytes were already uploaded or a journal was written.
+    """
+    normalized = []
+    for path in paths:
+        try:
+            value = normalize_windows_path(path)
+            b.quote_ps(value)  # UTF-8 byte cap, surrogates, control characters
+        except ValueError as error:
+            shown = path if isinstance(path, str) and len(path) <= 80 else "(path omitted)"
+            raise ValueError("Windows path rejected before transfer (" + str(error) +
+                             "): " + repr(shown)) from error
+        normalized.append(value)
+    return tuple(normalized)
+
+
+def decode_utf8_b64(text, what="Windows output"):
+    """Strict inverse of PowerShell ``[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s))``.
+
+    Fails closed (ValueError) on non-ASCII/invalid Base64 or invalid UTF-8; it
+    never substitutes replacement characters, so a corrupted or truncated
+    listing cannot be silently misread as different file names.
+    """
+    if not isinstance(text, str):
+        raise ValueError(what + " is not text")
+    try:
+        raw = base64.b64decode(text.strip(), validate=True)  # str must be pure ASCII
+        return raw.decode("utf-8", errors="strict")
+    except (ValueError, UnicodeError):  # binascii.Error and UnicodeDecodeError are ValueErrors
+        raise ValueError(what + " is not valid Base64-encoded UTF-8 (corrupt or truncated output)") from None
+
+
 def _remote_cleanup(b, partial):
     # The temporary filename is a fresh random transfer-owned path. Never
-    # remove an original source or final destination here.
-    name = b.quote_ps(str(partial))
-    script = ("$ErrorActionPreference='Stop';"
-              "if(Test-Path -LiteralPath " + name + " -PathType Leaf) {"
-              "Remove-Item -LiteralPath " + name + " -Force -ErrorAction Stop}")
+    # remove an original source or final destination here. The path expression
+    # is bound once to $p so the encoded script carries it a single time.
+    script = ("$ErrorActionPreference='Stop';$p=" + b.quote_ps(partial) + ";"
+              "if(Test-Path -LiteralPath $p -PathType Leaf){"
+              "Remove-Item -LiteralPath $p -Force -ErrorAction Stop}")
     b.powershell(script, timeout=12)
 
 def _remote_commit_no_clobber(b, partial, destination):
     # .NET File.Move(old,new) refuses to replace an existing file.
     # Both paths are in the same directory/volume for an atomic rename.
     script = ("$ErrorActionPreference='Stop';"
-              "[System.IO.File]::Move(" + b.quote_ps(str(partial)) + "," +
-              b.quote_ps(str(destination)) + ")")
+              "[System.IO.File]::Move(" + b.quote_ps(partial) + "," +
+              b.quote_ps(destination) + ")")
     b.powershell(script)
 
 def _cleanup_local_partial(partial):
@@ -117,14 +186,17 @@ def copy_v2(frm, source, to, target, backend):
     b.check_windows_pairing()
     root = b.ROOT
     if frm == "steamdeck":
+        # The Windows path is untrusted: validate (no str() cast) BEFORE any
+        # hash, Windows call, upload or journal write. Validate the generated
+        # temporary path too, because it is longer than the target.
+        (target,) = validate_windows_paths(b, target)
+        partial = target + PART_MARKER + uuid.uuid4().hex
+        validate_windows_paths(b, partial)
         source = Path(source).expanduser().resolve()
         if not source.is_file():
             raise FileNotFoundError(source)
-        target = str(target)
-        b.quote_ps(target)  # Path validation before starting any transfer.
         if b.remote_exists(target):
             raise FileExistsError("Windows target exists; overwrite prohibited")
-        partial = target + ".dc-part-" + uuid.uuid4().hex
         source_hash = b.local_hash(source)
         source_size = source.stat().st_size
         journal = TransferJournal(root, (frm,to), source,target,partial)
@@ -162,9 +234,8 @@ def copy_v2(frm, source, to, target, backend):
                 journal.complete()
                 raise
     # Windows -> Steam Deck
+    (source,) = validate_windows_paths(b, source)  # before any local or remote work
     target = _local_destination(target)
-    source = str(source)
-    b.quote_ps(source)
     if not b.remote_exists(source):
         raise FileNotFoundError("Windows source file not found: " + source)
     source_hash = b.remote_hash(source)

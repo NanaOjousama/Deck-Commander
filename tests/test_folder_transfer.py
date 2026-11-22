@@ -9,8 +9,11 @@ import unittest
 from pathlib import Path
 from folder_transfer import folder_copy, canonical_entries, safe_relative, directory_for, manifest_key, exclusive_operation_lock
 from folder_backend import FolderBackend
+import router
 
 class SimulatedDevices:
+    # The real encoder/byte cap, exactly as FolderBackend exposes it to folder_copy.
+    quote_ps=staticmethod(router.quote_ps)
     def __init__(self,root):
         self.base=Path(root)
         self.ROOT=self.base/'manager';self.ROOT.mkdir(mode=0o700)
@@ -47,12 +50,14 @@ class SimulatedDevices:
             items.append({'rel':rel,'type':'dir' if item.is_dir() else 'file',**({'size':item.stat().st_size} if item.is_file() else {})})
         return items
     def path_kind(self,device,path):
+        self.calls.append(('path_kind',device,path))
         p=self.lookup(device,path)
         if p.is_symlink():return 'other'
         if p.is_file():return 'file'
         if p.is_dir():return 'dir'
         return 'missing'
     def ensure_directory(self,device,path):
+        self.calls.append(('ensure_directory',device,path))
         p=self.lookup(device,path)
         if p.is_symlink() or (p.exists() and not p.is_dir()):raise ValueError('unsafe directory')
         p.mkdir(parents=True,exist_ok=True)
@@ -196,6 +201,52 @@ class FolderTransferTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):self.transfer()
         self.assertEqual((self.winroot()/'a.txt').read_bytes(),b'ANOTHER_PROCESS')
         self.assertEqual(len(self.journal()),1)
+    # --- up-front Windows path prevalidation (no side effects before failure) ---
+    DEEP_DIRS='\u6f22'*80+'/'+'\u6f22'*80+'/'+'b'*100  # 240+1+240+1+100 bytes, nested directories
+
+    def deep_file(self,base_root,base_dir,total_bytes):
+        """Create base_dir/<DEEP_DIRS>/<name> so the *Windows* path base_root/<rel> is exactly total_bytes."""
+        rel_dir=self.DEEP_DIRS
+        name_len=total_bytes-len((base_root+'/'+rel_dir+'/').encode('utf-8'))
+        self.assertTrue(0<name_len<=255,name_len)  # a single local file name must stay legal
+        folder=Path(base_dir)/rel_dir
+        folder.mkdir(parents=True)
+        (folder/('n'*name_len)).write_bytes(b'x')
+        self.assertEqual(len((base_root+'/'+rel_dir+'/'+'n'*name_len).encode('utf-8')),total_bytes)
+
+    def assert_no_destination_side_effects(self):
+        self.assertEqual(self.b.calls,[])  # no path_kind/ensure_directory/hash/copy at all
+        self.assertEqual(self.journal(),[])  # no manifest JSON
+    def test_overlong_generated_partial_rejected_before_any_copy_dir_or_manifest(self):
+        # a.txt/art/... are ordinary and sort BEFORE the long entry (old code copied them first).
+        self.deep_file(self.b.dstwin,self.source,760)  # fits alone; +'.dc-part-'+32 hex = 801 > 768
+        with self.assertRaisesRegex(ValueError,'too long'):self.transfer()
+        self.assert_no_destination_side_effects()
+        self.assertFalse(self.winroot().exists())
+    def test_overlong_destination_file_itself_rejected_before_any_side_effect(self):
+        self.deep_file(self.b.dstwin,self.source,800)  # the file path alone is beyond the 768-byte cap
+        with self.assertRaisesRegex(ValueError,'too long'):self.transfer()
+        self.assert_no_destination_side_effects()
+        self.assertFalse(self.winroot().exists())
+    def test_destination_exactly_at_limit_with_partial_suffix_still_copies(self):
+        self.deep_file(self.b.dstwin,self.source,727)  # 727 + 41 == 768, the maximum
+        result=self.transfer()
+        self.assertEqual(result['copied_files'],4)
+        self.assertEqual(self.journal(),[])
+    def test_overlong_windows_source_file_rejected_before_any_copy(self):
+        base=self.b.lookup('windows',self.b.srcwin)
+        (base/'chapter').mkdir(parents=True);(base/'a.txt').write_text('ok')
+        self.deep_file(self.b.srcwin,base,773)  # > 768 as a Windows *source* path
+        with self.assertRaisesRegex(ValueError,'too long'):
+            folder_copy('windows',self.b.srcwin,'steamdeck',self.b.dstdeck,self.b)
+        self.assert_no_destination_side_effects()
+        self.assertFalse(Path(self.b.dstdeck).exists())
+    def test_overlong_windows_root_rejected_before_journal_directory_exists(self):
+        with self.assertRaisesRegex(ValueError,'too long'):
+            folder_copy('steamdeck',self.b.srcdeck,'windows','C:/Test/'+'x'*800,self.b)
+        self.assertEqual(self.b.calls,[])
+        self.assertFalse((self.b.ROOT/'folder-transfer-journal').exists())
+
     def test_same_size_manifest_change_cannot_silently_overwrite(self):
         self.b.failure_at=2
         with self.assertRaises(ConnectionError):self.transfer()

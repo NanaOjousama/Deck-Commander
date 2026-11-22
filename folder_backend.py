@@ -7,6 +7,7 @@ import stat
 from pathlib import Path
 
 from folder_transfer import safe_relative
+from transfer_reliability import decode_utf8_b64
 
 class FolderBackend:
     def __init__(self,router):
@@ -15,6 +16,10 @@ class FolderBackend:
         self._ensured_directories=set()
 
     def check_windows_pairing(self):return self.b.check_windows_pairing()
+
+    def quote_ps(self,path):
+        # Lets folder_copy prevalidate Windows paths with the real encoder/byte cap.
+        return self.b.quote_ps(path)
 
     def normalize_root(self,device,raw):
         if not isinstance(raw,str) or '\x00' in raw or '\r' in raw or '\n' in raw:
@@ -66,7 +71,13 @@ class FolderBackend:
         return kind
 
     def ensure_directory(self,device,path):
-        key=(device,str(path))
+        if device=='windows':
+            # No str() cast: normalize_root rejects non-str, relative, UNC and
+            # malformed paths (ValueError) before any remote call.
+            win=self.normalize_root('windows',path)
+            key=(device,win)
+        else:
+            key=(device,str(path))
         if key in self._ensured_directories:
             return
         if device=='steamdeck':
@@ -80,7 +91,7 @@ class FolderBackend:
             self._ensured_directories.add(key)
             return
         if device!='windows':raise ValueError('Unknown device')
-        p=self.normalize_root('windows',str(path))
+        p=win
         q=self.b.quote_ps(p)
         # Reject reparse-point ancestors (junctions/symlinks), not just the
         # named destination. Never remove/overwrite an existing directory.
@@ -129,10 +140,19 @@ class FolderBackend:
               "if($_.PSIsContainer){[PSCustomObject]@{rel=$rel;type='dir'}}"+
               "else{[PSCustomObject]@{rel=$rel;type='file';size=[int64]$_.Length}}"+
               "});"+
-              "[Console]::Write((ConvertTo-Json -InputObject @($entries) -Depth 3 -Compress))")
-        data=self.b.powershell(code,timeout=120)
-        rows=json.loads(data)
-        if not isinstance(rows,list):rows=[rows]
+              "$json=ConvertTo-Json -InputObject @($entries) -Depth 3 -Compress;"+
+              "[Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json)))")
+        # ASCII Base64 of UTF-8 JSON: independent of the console code page and of
+        # the best-effort OutputEncoding prefix. Strict decode; never 'replace'.
+        text=decode_utf8_b64(self.b.powershell(code,timeout=120),'Windows folder listing')
+        try:rows=json.loads(text)
+        except ValueError:raise ValueError('Windows folder listing is not valid JSON') from None
+        # A single directory-entry object is allowed; scalar/null JSON is not.
+        # Otherwise canonical_entries would fail with TypeError later, after
+        # the folder-copy operation has already begun.
+        if isinstance(rows,dict):rows=[rows]
+        elif not isinstance(rows,list):
+            raise ValueError('Windows folder listing must be a JSON list or object')
         return rows
 
     def file_hash(self,device,path):

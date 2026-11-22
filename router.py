@@ -44,8 +44,37 @@ def ssh():
     return ["ssh", "-T", "-F", str(SSHCONF), "dc-windows"]
 
 
+# Windows OpenSSH hands the remote command line to cmd.exe, which truncates or
+# rejects lines longer than 8191 characters. A path is sent as Base64 text inside
+# a script that is itself UTF-16LE + Base64 encoded, so each path byte inflates
+# ~1.33x (inner Base64) * 2 (UTF-16LE) * 1.33x (outer Base64) ~= 3.6x. Bounding
+# paths by UTF-8 *bytes* (not characters) keeps the worst case predictable:
+#   2 paths (commit) * (768 B -> 1024 Base64 chars + ~85 expression chars) ~= 2220
+#   + ~250 fixed script chars -> ~2470 chars -> 4940 UTF-16LE bytes
+#   -> ~6590 Base64 chars, leaving >1500 chars under 8191 for ssh/powershell.exe
+#   arguments. MAX_ENCODED_COMMAND_CHARS is the enforced backstop (fails closed).
+# Callers must validate path + temporary suffix (.dc-part-/.dc-resume- + 32 hex).
+MAX_PATH_UTF8_BYTES = 768
+MAX_ENCODED_COMMAND_CHARS = 7000
+
+# Windows PowerShell 5.1 may write stdout in the OEM code page. Request UTF-8 so
+# non-ASCII names round-trip, without a BOM. The assignment can throw when the
+# host has no console handle ("The handle is invalid"); that only affects how
+# non-ASCII output is displayed, so it must not abort the real command.
+# This best-effort prefix is NOT relied on for data: every machine-parsed
+# structured result containing user text (directory listings, folder trees) is
+# emitted as ASCII Base64 of UTF-8 JSON and decoded strictly (see
+# transfer_reliability.decode_utf8_b64), so a swallowed failure here cannot
+# corrupt it. Other machine-parsed stdout is pure ASCII (0/1, hex digests, digits,
+# fixed words). NOT yet verified on a real Windows host.
+POWERSHELL_PREFIX = ("try{[Console]::OutputEncoding=(New-Object System.Text.UTF8Encoding($false))}"
+                     "catch{};")
+
+
 def powershell(script, timeout=60):
-    enc = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    enc = base64.b64encode((POWERSHELL_PREFIX + script).encode("utf-16-le")).decode("ascii")
+    if len(enc) > MAX_ENCODED_COMMAND_CHARS:
+        raise ValueError("PowerShell command too large to send safely (paths too long)")
     return run(ssh() + ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
                          "-EncodedCommand", enc], timeout=timeout)
 
@@ -55,12 +84,21 @@ def quote_ps(raw):
 
     PowerShell recognizes Unicode typographic quotes as syntax, so escaping
     only the ASCII apostrophe leaves attacker-controlled paths unsafe.
+    Fails closed on non-str, empty, control-char, lone-surrogate and
+    over-long (> MAX_PATH_UTF8_BYTES UTF-8 bytes) values.
     """
-    if not isinstance(raw, str) or not raw or len(raw) > 2048 or any(c in raw for c in "\r\n\0"):
+    if not isinstance(raw, str) or not raw or any(c in raw for c in "\r\n\0"):
         raise ValueError("Invalid path")
-    encoded = base64.b64encode(raw.encode("utf-8")).decode("ascii")
+    try:
+        data = raw.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("Invalid path: not valid Unicode text") from None
+    if len(data) > MAX_PATH_UTF8_BYTES:
+        raise ValueError("Path too long: " + str(len(data)) + " UTF-8 bytes (limit " +
+                         str(MAX_PATH_UTF8_BYTES) + ", including temporary-file suffix)")
+    encoded = base64.b64encode(data).decode("ascii")
     return ("([System.Text.Encoding]::UTF8.GetString("
-            "[System.Convert]::FromBase64String('" + encoded + "')))" )
+            "[System.Convert]::FromBase64String('" + encoded + "')))")
 
 
 def remote_exists(path):
@@ -88,11 +126,10 @@ def local_hash(path):
 
 def sftp(op, src, dst):
     # Windows OpenSSH SFTP absolute paths use /C:/..., NOT C:/... (relative).
+    # Same contract as transfer_reliability.validate_windows_paths (shared check).
     def windows_sftp_path(raw):
-        raw = str(raw).replace("\\", "/")
-        if not re.fullmatch(r"[A-Za-z]:/[^\r\n]*", raw):
-            raise ValueError("Windows SFTP path must be an absolute drive path such as C:/Users/... ")
-        return "/" + raw
+        from transfer_reliability import normalize_windows_path
+        return "/" + normalize_windows_path(raw)
     if op == "put":
         dst = windows_sftp_path(dst)
     elif op == "get":
@@ -108,6 +145,23 @@ def sftp(op, src, dst):
     batch = (op + " " + q(src) + " " + q(dst) + "\n").encode()
     run(["sftp", "-q", "-b", "-", "-F", str(SSHCONF), "dc-windows"],
         data=batch, timeout=300)
+
+
+def windows_ls(path):
+    """JSON listing of a Windows directory (same JSON text as before).
+
+    The JSON is sent as ASCII Base64 of its UTF-8 bytes so non-ASCII names
+    survive any console code page, and decoded strictly (corrupt data raises
+    ValueError rather than being replaced). [string](...) keeps an empty
+    directory as an empty listing instead of failing on $null.
+    """
+    from transfer_reliability import decode_utf8_b64
+    script = ("$ErrorActionPreference='Stop';"
+              "$items=@(Get-ChildItem -LiteralPath " + quote_ps(path) +
+              " | Select-Object Name,PSIsContainer,Length);"
+              "$json=ConvertTo-Json -InputObject $items -Compress;"
+              "[Console]::Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json)))")
+    return decode_utf8_b64(powershell(script), "Windows directory listing")
 
 
 def copy(frm, source, to, target):
@@ -177,8 +231,7 @@ def main():
             for item in sorted(root.iterdir(), key=lambda x: x.name.lower()):
                 print(("DIR " if item.is_dir() else "FILE ") + item.name)
         else:
-            cmd = "$ErrorActionPreference='Stop';Get-ChildItem -LiteralPath " + quote_ps(args.path) + " | Select-Object Name,PSIsContainer,Length | ConvertTo-Json -Compress"
-            print(powershell(cmd))
+            print(windows_ls(args.path))
     elif args.action == "copy":
         print(json.dumps(copy(args.from_device, args.source, args.to_device, args.destination), indent=2))
     elif args.action == "folder-copy":

@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 import router
 
 # The returned expression must consist exclusively of fixed PowerShell syntax
@@ -42,6 +43,46 @@ class PowerShellPathTests(unittest.TestCase):
             with self.subTest(value=repr(value)):
                 with self.assertRaises(ValueError):
                     router.quote_ps(value)
+
+    def test_non_string_paths_refused(self):
+        for value in (None, 5, b"C:/Test/x", bytearray(b"C:/x"), ["C:/x"], Path("C:/Test/x"), object()):
+            with self.subTest(value=repr(value)):
+                with self.assertRaises(ValueError):
+                    router.quote_ps(value)
+
+    def test_lone_surrogates_refused_cleanly(self):
+        for value in ("C:/Test/\ud800.txt", "\udfff", "C:/Test/a\udc80b"):
+            with self.subTest(value=ascii(value)):
+                with self.assertRaisesRegex(ValueError, "Invalid path"):
+                    router.quote_ps(value)  # ValueError, not a bare UnicodeEncodeError leak
+
+    def test_valid_surrogate_pair_is_accepted_as_one_character(self):
+        expr = router.quote_ps("C:/Test/\U0001F680.txt")  # a real astral character
+        self.assertEqual(base64.b64decode(EXPRESSION.fullmatch(expr).group(1)).decode("utf-8"),
+                         "C:/Test/\U0001F680.txt")
+
+    def test_limit_is_utf8_bytes_not_characters(self):
+        self.assertEqual(router.MAX_PATH_UTF8_BYTES, 768)
+        for value in ("a" * 768, "\u20ac" * 256, "\U0001F680" * 192):  # all exactly 768 bytes
+            with self.subTest(value=ascii(value[:3])):
+                self.assertEqual(len(value.encode("utf-8")), 768)
+                router.quote_ps(value)
+        for value in ("a" * 769, "\u20ac" * 257, "\U0001F680" * 193):
+            with self.subTest(over=ascii(value[:3])):
+                self.assertLess(len(value), 2048)  # the old character limit would have accepted it
+                with self.assertRaisesRegex(ValueError, "too long"):
+                    router.quote_ps(value)
+
+    def test_generated_temporary_suffixes_fit_inside_the_same_limit(self):
+        # The longest accepted target leaves room for neither suffix; callers
+        # must validate the generated partial path, not only the target.
+        longest_resume = ".dc-resume-" + "0" * 32
+        longest_part = ".dc-part-" + "0" * 32
+        self.assertEqual((len(longest_part), len(longest_resume)), (41, 43))
+        target = "C:/Test/" + "a" * (768 - 8 - 43)
+        router.quote_ps(target + longest_resume)
+        with self.assertRaises(ValueError):
+            router.quote_ps(target + "a" + longest_resume)
 
     def test_remote_file_helpers_never_embed_filename_as_powershell_code(self):
         dangerous = "C:/Test/a\u2019);whoami;#.txt"

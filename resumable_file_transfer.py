@@ -14,8 +14,11 @@ import uuid
 from pathlib import Path
 from folder_backend import FolderBackend
 from folder_transfer import directory_for, manifest_key, exclusive_operation_lock, atomic_json
+from transfer_reliability import (validate_windows_paths, normalize_windows_path,
+                                  _remote_cleanup, _SUFFIX_PROBE)
 
 SUBDIR='resumable-file-journal'
+RESUME_MARKER='.dc-resume-'
 MAX_BYTES=40*1024**3
 
 
@@ -71,9 +74,9 @@ def sftp_resume(b,kind,source,destination):
         command='reget'
         left=windows;right=local
     else:raise ValueError('Invalid SFTP resume direction')
-    if not re.fullmatch(r'[A-Za-z]:/[^\r\n\x00]*',str(windows)):
-        raise ValueError('Windows path must be absolute')
-    windows='/'+str(windows).replace('\\','/')
+    # Same contract as router.sftp (absolute drive path; '\' normalized to '/';
+    # no double quotes/control characters; non-str rejected, not cast).
+    windows='/'+normalize_windows_path(windows)
     if kind=='upload':right=windows
     else:left=windows
     def quoted(value):
@@ -111,9 +114,16 @@ def resume_file(frm,source,to,destination,backend,*,resume=False):
     if not isinstance(resume,bool):raise ValueError('resume must be boolean')
     b.check_windows_pairing()
     paths=FolderBackend(b)
-    source=paths.normalize_root(frm,str(source))
-    destination=paths.normalize_root(to,str(destination))
+    # Preserve the validation contract: untrusted device paths must already be
+    # text; never coerce None, numbers or Path objects into accepted filenames.
+    source=paths.normalize_root(frm,source)
+    destination=paths.normalize_root(to,destination)
     if source==destination:raise ValueError('Identical source and destination')
+    # Fail closed on over-long/invalid Windows paths BEFORE any Windows call,
+    # directory creation, journal write or transfer. The probe has the exact
+    # length of the generated '.dc-resume-<32 hex>' partial path.
+    if frm=='windows':validate_windows_paths(b,source)
+    if to=='windows':validate_windows_paths(b,destination,destination+RESUME_MARKER+_SUFFIX_PROBE)
     if paths.path_kind(frm,source)!='file':raise FileNotFoundError('Source is not an ordinary file: '+source)
     if to=='steamdeck':
         parent=str(Path(destination).parent)
@@ -135,13 +145,16 @@ def resume_file(frm,source,to,destination,backend,*,resume=False):
         if resume:
             if not record.is_file():raise FileNotFoundError('No interrupted resumable copy recorded for these exact paths')
             job=json.loads(record.read_text())
+            if not isinstance(job,dict):raise ValueError('Corrupt resumable journal record')
             expected={'source_device':frm,'destination_device':to,'source':source,'destination':destination,'source_sha256':fullhash,'size':total}
             for k,v in expected.items():
                 if job.get(k)!=v:raise RuntimeError('Source changed since transfer started; resume refused ('+k+')')
-            partial=job['partial']
+            partial=job.get('partial')  # absent/tampered -> ValueError, not KeyError
             # Never use an untrusted journal to target arbitrary paths.
+            if not isinstance(partial,str):raise ValueError('Unsafe journal partial path')
             if not re.fullmatch(re.escape(destination)+r'\.dc-resume-[0-9a-f]{32}',partial) and to=='windows':
                 raise ValueError('Unsafe Windows journal partial path')
+            if to=='windows':validate_windows_paths(b,partial)
             if to=='steamdeck':
                 p=Path(partial)
                 if p.parent!=Path(destination).parent or not re.fullmatch(re.escape(Path(destination).name)+r'\.dc-resume-[0-9a-f]{32}',p.name):
@@ -149,7 +162,8 @@ def resume_file(frm,source,to,destination,backend,*,resume=False):
         else:
             if record.exists():raise FileExistsError('A resumable transfer is already pending; use resume=true')
             if target_kind!='missing':raise FileExistsError('Destination already exists; overwrite prohibited')
-            partial=destination+'.dc-resume-'+uuid.uuid4().hex
+            partial=destination+RESUME_MARKER+uuid.uuid4().hex
+            if to=='windows':validate_windows_paths(b,partial)  # belt and braces; journal is written next
             job={'version':1,'source_device':frm,'source':source,'destination_device':to,
                  'destination':destination,'partial':partial,'source_sha256':fullhash,
                  'size':total,'created_unix':int(time.time()),'state':'starting'}
@@ -172,7 +186,7 @@ def resume_file(frm,source,to,destination,backend,*,resume=False):
                     if p.is_file() and not p.is_symlink():p.unlink()
                 else:
                     if paths.path_kind(to,partial)=='file':
-                        b.powershell("$ErrorActionPreference='Stop';Remove-Item -LiteralPath "+b.quote_ps(partial)+" -Force",timeout=25)
+                        _remote_cleanup(b,partial)  # shared cleanup: $p bound once, Leaf-only
                 record.unlink(missing_ok=True)
                 return {'copied':True,'resumed':True,'bytes_reused':total,'bytes_transferred':0,'bytes':total,'sha256':fullhash}
             if to=='windows':

@@ -13,6 +13,9 @@ import time
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
+# transfer_reliability imports no project module, so this cannot be circular.
+from transfer_reliability import validate_windows_paths, PART_MARKER, _SUFFIX_PROBE
+
 JOURNAL_SUBDIR = 'folder-transfer-journal'
 MAX_FILES = 2000
 MAX_TOTAL_BYTES = 20 * 1024**3
@@ -109,6 +112,30 @@ def join_target(root,rel,device):
     return str(Path(root).joinpath(*rel.split('/')))
 
 
+def prevalidate_windows_paths(backend, frm, src, to, dst, files=(), dirs=()):
+    """Reject every planned Windows path that cannot be sent, BEFORE any side effect.
+
+    Pure computation (backend.quote_ps only encodes; it never calls Windows).
+    Checks: Windows root(s); Windows source files; destination directories; and
+    each destination file together with a same-length probe of the generated
+    '.dc-part-<32 hex>' temporary path used by copy_v2. Raises ValueError so a
+    folder copy cannot copy earlier files and then die on a later over-long one.
+    """
+    if 'windows' not in (frm,to):return
+    candidates=[]
+    if frm=='windows':
+        candidates.append(src)
+        candidates.extend(join_target(src,item['rel'],frm) for item in files)
+    if to=='windows':
+        candidates.append(dst)
+        candidates.append(dst+PART_MARKER+_SUFFIX_PROBE)
+        candidates.extend(join_target(dst,item['rel'],to) for item in dirs)
+        for item in files:
+            path=join_target(dst,item['rel'],to)
+            candidates.extend((path,path+PART_MARKER+_SUFFIX_PROBE))
+    validate_windows_paths(backend,*candidates)
+
+
 def folder_copy(frm, source, to, target, backend, *, resume=False):
     if frm == to or {frm,to}!={'steamdeck','windows'}:
         raise ValueError('Folder copies require explicit Steam Deck and Windows devices')
@@ -118,12 +145,16 @@ def folder_copy(frm, source, to, target, backend, *, resume=False):
     src=backend.normalize_root(frm,source)
     dst=backend.normalize_root(to,target)
     if src==dst:raise ValueError('Source and destination cannot be identical')
+    prevalidate_windows_paths(backend,frm,src,to,dst)  # roots: before the journal dir/lock exist
     directory=directory_for(backend.ROOT)
     jobid=manifest_key(frm,src,to,dst)
     manifest_path=directory/(jobid+'.json')
     with exclusive_operation_lock(directory/(jobid+'.lock')):
         entries=backend.list_tree(frm,src)
         files,dirs,total=canonical_entries(entries)
+        # Every planned path (incl. temp-file suffix) must be sendable before the
+        # manifest is written or anything is created/copied on the destination.
+        prevalidate_windows_paths(backend,frm,src,to,dst,files,dirs)
         expected={'version':1,'source_device':frm,'source':src,
                   'destination_device':to,'destination':dst,
                   'files':files,'directories':dirs,'total_bytes':total}

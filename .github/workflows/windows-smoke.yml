@@ -1,0 +1,23 @@
+name: Disposable Windows PowerShell smoke
+on:
+  push:
+    branches:
+      - ci/windows-validation-20261121
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-native:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: PowerShell 5.1 — generated commands and disposable files
+        shell: pwsh
+        run: python tests/test_windows_native_smoke.py powershell.exe
+      - name: PowerShell 7 — generated commands and disposable files
+        shell: pwsh
+        run: python tests/test_windows_native_smoke.py pwsh.exe
