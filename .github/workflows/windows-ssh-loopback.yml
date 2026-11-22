@@ -1,0 +1,32 @@
+name: Disposable Windows sshd loopback integration
+on:
+  push:
+    branches:
+      - ci/windows-validation-20261121
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-ssh-loopback:
+    runs-on: windows-2022
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install Windows OpenSSH server (no service started)
+        shell: powershell
+        timeout-minutes: 6
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0').State -ne 'Installed') {
+            Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-String | Write-Output
+          }
+          if (!(Test-Path "$env:SystemRoot\System32\OpenSSH\sshd.exe")) {
+            throw 'OpenSSH server executable unavailable'
+          }
+      - name: Verify real ssh -T, pinning, key revocation and PowerShell stdout (loopback-only)
+        shell: powershell
+        timeout-minutes: 4
+        run: python tests/test_windows_ssh_loopback.py
