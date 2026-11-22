@@ -9,11 +9,18 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { spawn } from 'node:child_process';
 import { isIP } from 'node:net';
-import { networkInterfaces } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { assertDeviceEnabled, devicesForCall, requireDeviceName, watchDeviceRevocation } from './gateway_access.mjs';
 import { fileURLToPath } from 'node:url';
 
 const root = process.env.DC_HOME || dirname(fileURLToPath(import.meta.url));
+// Same default pairing directory as router.py/pair_windows.py.
+const deviceConfigRoot = process.env.DC_HOME || resolve(homedir(), '.local/share/deck-commander-multidevice');
+const deviceConfigFile = resolve(deviceConfigRoot, 'devices.json');
+// A customer-style gateway requires an explicit permitted-tool list per
+// device. Legacy trusted single-user installs remain compatible by default.
+const requireToolAllowlist = process.env.DC_REQUIRE_TOOL_ALLOWLIST === '1';
 const router = resolve(root, 'router.py');
 const windowsCmd = process.env.DC_WINDOWS_LAUNCHER || 'C:\\DeckCommander\\start-dc.cmd';
 const backends = {
@@ -23,11 +30,13 @@ const backends = {
     client: null, connecting: null, transport: null, retryAfter: 0
   },
   windows: {
-    command: '/usr/bin/ssh',
+    command: process.env.DC_WINDOWS_SSH_BINARY || '/usr/bin/ssh', // trusted local launch configuration only
     args: ['-F', root + '/ssh_config', '-T', 'dc-windows', 'cmd.exe', '/d', '/c', windowsCmd],
     client: null, connecting: null, transport: null, retryAfter: 0
   }
 };
+// Never use untrusted tool argument strings to index an inherited prototype.
+Object.setPrototypeOf(backends, null);
 const deviceNames = Object.keys(backends);
 const server = new Server({name:'deck-commander-multidevice',version:'0.1.0'}, {capabilities:{tools:{}}});
 let toolCache;
@@ -99,9 +108,29 @@ async function dropBackend(device, client, retryMs = 0) {
   markOffline(device, client, b.transport, retryMs);
   await client.close().catch(() => {});
 }
+async function enforceAccess(device, toolName = undefined) {
+  requireDeviceName(device);
+  try { assertDeviceEnabled(device, deviceConfigFile, toolName, requireToolAllowlist); }
+  catch (err) {
+    const b = backends[device];
+    // Drop a cached Windows connection as soon as revocation is observed.
+    // This closes the transport. It does not promise to cancel a remote
+    // command that the independent SSH server has already started.
+    if (b.client) await dropBackend(device, b.client);
+    else if (b.transport) {
+      const transport = b.transport;
+      b.transport = null;
+      await transport.close().catch(() => {});
+    }
+    throw err;
+  }
+}
+
 async function getBackend(device) {
+  // Checked even for an already-connected client: cached connections are NOT
+  // grandfathered in after devices.json is changed to disabled.
+  await enforceAccess(device);
   const b = backends[device];
-  if (!b) throw new Error('Unknown device: ' + device);
   if (b.client) return b.client;
   if (b.connecting) return b.connecting;
   if (device === 'windows' && Date.now() < b.retryAfter) {
@@ -133,6 +162,8 @@ async function getBackend(device) {
     };
     try {
       await client.connect(transport);
+      // A device may be revoked while the SSH/MCP handshake was in progress.
+      await enforceAccess(device);
       b.client = client;
       b.retryAfter = 0;
       log(device, 'backend connected');
@@ -234,10 +265,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({tools:await expos
 server.setRequestHandler(CallToolRequestSchema, async request => {
   const name = request.params.name;
   try {
+    // Every operation checks the target(s) BEFORE any backend or subprocess
+    // side effects. This is device authorization for a trusted gateway process,
+    // not authentication of individual remote MCP clients.
+    for (const target of devicesForCall(name, request.params.arguments))
+      await enforceAccess(target, name);
     if (name === 'list_devices') {
       const entries=[];
       for (const d of deviceNames) {
         try {
+          await enforceAccess(d, name);
           const cl=await getBackend(d);
           entries.push(d + ': connected ('+(await cl.listTools()).tools.length+' tools)');
         } catch (e) {
@@ -275,12 +312,14 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
           throw new Error('Cannot transfer: Windows desktop unavailable (' + (e.message || String(e)) + ')');
         }
       }
+      // Also check after the async connectivity probe, just before spawning.
+      for (const target of devicesForCall(name, a)) await enforceAccess(target, name);
       return {content:[{type:'text',text:await invokeRouter(a, folder, resumable)}]};
     }
     const known = (await exposedTools()).some(t=>t.name===name);
     if(!known) throw new Error('Unknown tool: '+name);
     const args={...(request.params.arguments||{})};
-    const device=args.device || 'steamdeck';
+    const device=args.device === undefined ? 'steamdeck' : args.device;
     delete args.device;
     // Reduce unproductive chat-side polls without repeating any command.
     // This only adjusts a *wait window*: the process runs once, and
@@ -304,6 +343,8 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
     }
     const client=await getBackend(device);
     try {
+      // Revocation may have occurred during the awaited backend connection.
+      await enforceAccess(device, name);
       return await client.callTool({name,arguments:args});
     } catch (err) {
       // Never replay a command that may have had side effects. Clear stale
@@ -321,6 +362,15 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
       (e.message||String(e)) + (hint ? '\nNetwork notice: '+hint : '')}]};
   }
 });
+// Best-effort event-driven shutdown for idle cached sessions. Request-time
+// checks above are authoritative even if fs.watch misses an event.
+watchDeviceRevocation(deviceConfigFile, async () => {
+  for (const device of deviceNames) {
+    try { await enforceAccess(device); }
+    catch { /* A revoked device has been disconnected. */ }
+  }
+}, error => log('device config watch unavailable or failed:', error?.message || String(error)));
+
 process.on('SIGTERM',async()=>{
   for (const d of deviceNames) await backends[d].client?.close().catch(()=>{});
   process.exit(0);

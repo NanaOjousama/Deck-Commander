@@ -1,0 +1,24 @@
+name: Gateway device access and revocation
+on:
+  push:
+    branches:
+      - security/gateway-access-20261122
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gateway-access:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install declared dependencies without lifecycle scripts
+        run: npm install --ignore-scripts --no-audit --no-fund --no-package-lock --no-save
+      - name: Parse gateway and enforce isolated authorization fixtures
+        run: |
+          node --check gateway.mjs
+          node --check gateway_access.mjs
+          node --test tests/test_gateway_access.mjs tests/test_gateway_runtime.mjs

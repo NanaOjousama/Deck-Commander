@@ -1,0 +1,15 @@
+{
+  "devices": {
+    "steamdeck": {
+      "enabled": true,
+      "allowed_tools": ["list_devices", "read_file", "list_directory"]
+    },
+    "windows": {
+      "enabled": false,
+      "host": "",
+      "user": "",
+      "port": 22,
+      "allowed_tools": ["list_devices", "read_file", "list_directory"]
+    }
+  }
+}
