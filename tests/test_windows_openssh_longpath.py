@@ -141,6 +141,72 @@ def test_longpaths(root, executable):
     return summary
 
 
+def test_sftp_and_powershell_longpath_consistency(root, executable, client, server):
+    """SFTP-upload a real Windows partial, then hash and commit using actual PowerShell.
+
+    A successful SFTP upload followed by a PowerShell hash/move/cleanup failure
+    is a genuine stranded-partial compatibility risk, not a successful test.
+    """
+    import router
+    import transfer_reliability as transfer
+    shell=binary(executable)
+    if not shell:
+        raise RuntimeError('PowerShell binary missing: '+executable)
+    original_ssh,original_run=router.ssh,router.run
+    router.ssh=lambda: []
+    def local_run(cmd,**kwargs):
+        assert cmd[0]=='powershell.exe'
+        return original_run([shell]+cmd[1:],**kwargs)
+    router.run=local_run
+    results=[];stranded=[]
+    folder=root/'cross-longpaths'
+    folder.mkdir()
+    source=root/'local-upload.bin'
+    try:
+        for target_length in (220,230,250,265):
+            target=exact_length_path(folder,target_length)
+            partial=Path(str(target)+'.dc-part-'+'0'*32)
+            body=('CROSS_SFTP_'+str(target_length)).encode('ascii')
+            source.write_bytes(body)
+            batch='put '+sftp_quote(source)+' '+sftp_quote(partial)+'\n'
+            r=subprocess.run([client,'-q','-D',server,'-b','-'],input=batch.encode('utf-8'),
+                             stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=25,check=False)
+            item={'target_length':target_length,'partial_length':len(str(partial)),
+                  'sftp_exit':r.returncode,'sftp_error':r.stderr.decode('utf-8','replace')[-180:],
+                  'partial_sha256_ok':False,'powershell_sha256_ok':None,
+                  'powershell_commit_ok':None,'cleanup_ok':None}
+            item['partial_sha256_ok']=partial.is_file() and partial.read_bytes()==body
+            if item['partial_sha256_ok']:
+                backend=type('B',(),{'quote_ps':staticmethod(router.quote_ps),
+                                    'powershell':staticmethod(router.powershell)})()
+                try:
+                    encoded_path=str(partial).replace('\\','/')
+                    target_path=str(target).replace('\\','/')
+                    item['powershell_sha256_ok']=router.remote_hash(encoded_path)==hashlib.sha256(body).hexdigest()
+                    if item['powershell_sha256_ok']:
+                        transfer._remote_commit_no_clobber(backend,encoded_path,target_path)
+                        item['powershell_commit_ok']=target.is_file() and target.read_bytes()==body and not partial.exists()
+                except Exception as error:
+                    item['powershell_error']=type(error).__name__+': '+str(error)[-220:]
+                if partial.exists():
+                    try:
+                        transfer._remote_cleanup(backend,str(partial).replace('\\','/'))
+                        item['cleanup_ok']=not partial.exists()
+                    except Exception as error:
+                        item['cleanup_ok']=type(error).__name__+': '+str(error)[-220:]
+                if not (item['powershell_sha256_ok'] and item['powershell_commit_ok']):
+                    stranded.append(target_length)
+            elif r.returncode==0:
+                stranded.append(target_length)  # wrong-file success is never acceptable
+            results.append(item)
+    finally:
+        router.ssh,router.run=original_ssh,original_run
+    print('SFTP_POWERSHELL_CROSS_MATRIX='+json.dumps(results,ensure_ascii=True),flush=True)
+    if stranded:
+        raise AssertionError('SFTP and PowerShell disagree or corrupt at lengths: '+repr(stranded))
+    return results
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--shell',choices=('powershell.exe','pwsh.exe'),required=True)
@@ -159,6 +225,7 @@ def main():
             try:
                 sftp_result=test_sftp(base,sftp_client,sftp_server)
                 print('SFTP_DIRECT='+json.dumps(sftp_result,ensure_ascii=True),flush=True)
+                test_sftp_and_powershell_longpath_consistency(base,args.shell,sftp_client,sftp_server)
             except Exception as error:
                 print('SFTP_DIRECT_ERROR='+type(error).__name__+': '+str(error)[-800:],flush=True)
                 raise
