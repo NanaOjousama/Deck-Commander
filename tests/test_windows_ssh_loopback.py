@@ -35,11 +35,16 @@ def call(args, *, timeout=30, expect_success=True):
     return r
 
 
-def acl_private(path):
-    # Windows OpenSSH StrictModes requires owner-only/admin/system key material.
-    user=getpass.getuser()
-    call(['icacls',str(path),'/inheritance:r','/grant:r',
-          '*S-1-5-18:(F)','*S-1-5-32-544:(F)',user+':(F)'])
+def acl_private(path, *, admin_authorized_keys=False):
+    # Windows OpenSSH StrictModes requires no extraneous ACL principals.
+    # GitHub's Windows image injects an explicit OWNER RIGHTS (S-1-3-4) ACE;
+    # removing inherited ACEs alone does not remove that explicit entry.
+    permissions=['*S-1-5-18:(F)','*S-1-5-32-544:(F)']
+    if not admin_authorized_keys:
+        permissions.append(getpass.getuser()+':(F)')
+    call(['icacls',str(path),'/inheritance:r','/grant:r',*permissions])
+    call(['icacls',str(path),'/remove:g','*S-1-3-4'])
+    call(['icacls',str(path),'/remove:d','*S-1-3-4'])
 
 
 def build(root, port):
@@ -54,7 +59,7 @@ def build(root, port):
         acl_private(path)
     authorized=root/'authorized_keys'
     authorized.write_text(client_key.with_suffix('.pub').read_text(encoding='utf8'),encoding='utf8')
-    acl_private(authorized)
+    acl_private(authorized,admin_authorized_keys=True)
     hostpub=server_key.with_suffix('.pub').read_text(encoding='utf8').split()
     known=root/'known_hosts';known.write_text('[127.0.0.1]:'+str(port)+' '+hostpub[0]+' '+hostpub[1]+'\n',encoding='ascii')
     bad_pub=rogue_key.with_suffix('.pub').read_text(encoding='utf8').split()
