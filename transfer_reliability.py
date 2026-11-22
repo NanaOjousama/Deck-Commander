@@ -201,6 +201,7 @@ def copy_v2(frm, source, to, target, backend):
         source_size = source.stat().st_size
         journal = TransferJournal(root, (frm,to), source,target,partial)
         committed = False
+        commit_attempted = False
         try:
             journal.stage("uploading")
             b.sftp("put",source,partial)
@@ -210,6 +211,7 @@ def copy_v2(frm, source, to, target, backend):
             if b.remote_hash(partial) != source_hash:
                 raise RuntimeError("SHA256 mismatch on Windows partial; destination not committed")
             journal.stage("committing")
+            commit_attempted = True
             _remote_commit_no_clobber(b,partial,target)
             committed = True
             journal.stage("committed_verifying")
@@ -222,6 +224,15 @@ def copy_v2(frm, source, to, target, backend):
                 try: journal.stage("committed_needs_inspection", error=str(error)[:400])
                 except Exception: pass
                 raise
+            # An SSH timeout may occur AFTER the server already moved the file.
+            # Without an acknowledgement, never destroy the journal or attempt
+            # another commit automatically. A known FileExistsError indicates a
+            # no-clobber collision and follows the original safe cleanup path.
+            if commit_attempted and not isinstance(error, FileExistsError):
+                try: journal.stage("commit_unknown", error=str(error)[:400])
+                except Exception: pass  # 'committing' remains durable if write fails
+                raise RuntimeError("remote commit result uncertain; inspect recovery journal: "
+                                   + str(journal.path)) from error
             try:
                 _remote_cleanup(b,partial)
             except Exception as cleanup_error:
@@ -248,6 +259,7 @@ def copy_v2(frm, source, to, target, backend):
         _cleanup_local_partial(partial)
         raise
     committed = False
+    commit_attempted = False
     try:
         journal.stage("downloading")
         b.sftp("get",source,partial)
@@ -257,6 +269,7 @@ def copy_v2(frm, source, to, target, backend):
         if b.remote_hash(source) != source_hash:
             raise RuntimeError("Windows source changed during download; destination not committed")
         journal.stage("committing")
+        commit_attempted = True
         # os.link atomically creates a new name *only* if it doesn't exist.
         # Both paths share the parent filesystem, preserving no-clobber.
         os.link(partial,target)
@@ -270,6 +283,14 @@ def copy_v2(frm, source, to, target, backend):
             try: journal.stage("committed_needs_inspection",error=str(error)[:400])
             except Exception: pass
             raise
+        # An interrupted filesystem acknowledgement can also happen after
+        # os.link succeeded. Keep both the partial and the journal for an
+        # explicit, evidence-based recovery; do not replay a link blindly.
+        if commit_attempted and not isinstance(error, FileExistsError):
+            try: journal.stage("commit_unknown", error=str(error)[:400])
+            except Exception: pass
+            raise RuntimeError("local commit result uncertain; inspect recovery journal: "
+                               + str(journal.path)) from error
         try:
             _cleanup_local_partial(partial)
             journal.complete()

@@ -207,6 +207,68 @@ def test_sftp_and_powershell_longpath_consistency(root, executable, client, serv
     return results
 
 
+def test_failure_injected_remote_cleanup(root, executable, client, server):
+    """Real Windows SFTP + PowerShell: corrupt partial and collision cleanup.
+
+    Synthetic payloads only. A source file is never deleted and a preexisting
+    destination must survive exactly; only our own .dc-part file is removed.
+    """
+    import router
+    import transfer_reliability as transfer
+    shell=binary(executable)
+    oldssh,oldrun=router.ssh,router.run
+    router.ssh=lambda: []
+    def local_run(command,**kwargs):
+        assert command[0]=='powershell.exe'
+        return oldrun([shell]+command[1:],**kwargs)
+    router.run=local_run
+    result=[]
+    folder=root/'failure-fixtures'
+    folder.mkdir()
+    source=root/'failure-source.bin'
+    source.write_bytes(b'CANONICAL_SOURCE_CONTENT')
+    try:
+        backend=type('B',(),{'quote_ps':staticmethod(router.quote_ps),
+                              'powershell':staticmethod(router.powershell)})()
+        for scenario in ('corrupt_partial','destination_collision'):
+            dest=exact_length_path(folder,250)
+            partial=Path(str(dest)+'.dc-part-'+'0'*32)
+            # File names are reused only after verifying cleanup and resetting fixtures.
+            if dest.exists():dest.unlink()
+            if partial.exists():partial.unlink()
+            batch='put '+sftp_quote(source)+' '+sftp_quote(partial)+'\n'
+            uploaded=subprocess.run([client,'-q','-D',server,'-b','-'],input=batch.encode('utf8'),
+                                    capture_output=True,timeout=25)
+            if uploaded.returncode or partial.read_bytes()!=source.read_bytes():
+                raise AssertionError('Could not stage SFTP partial for '+scenario)
+            qpartial=str(partial).replace('\\','/')
+            qdest=str(dest).replace('\\','/')
+            if scenario=='corrupt_partial':
+                partial.write_bytes(b'INJECTED_CORRUPTION')
+                if router.remote_hash(qpartial)==hashlib.sha256(source.read_bytes()).hexdigest():
+                    raise AssertionError('Corrupted Windows partial incorrectly verified')
+                transfer._remote_cleanup(backend,qpartial)
+                good=(not partial.exists() and not dest.exists() and
+                      source.read_bytes()==b'CANONICAL_SOURCE_CONTENT')
+            else:
+                dest.write_bytes(b'UNRELATED_PREEXISTING_DESTINATION')
+                try:
+                    transfer._remote_commit_no_clobber(backend,qpartial,qdest)
+                except Exception:
+                    pass
+                else:
+                    raise AssertionError('No-clobber move overwrote existing destination')
+                transfer._remote_cleanup(backend,qpartial)
+                good=(not partial.exists() and dest.read_bytes()==b'UNRELATED_PREEXISTING_DESTINATION'
+                      and source.read_bytes()==b'CANONICAL_SOURCE_CONTENT')
+            result.append({'scenario':scenario,'partial_length':len(str(partial)),
+                           'validated':good,'source_untouched':source.read_bytes()==b'CANONICAL_SOURCE_CONTENT'})
+            if not good:raise AssertionError('Failure-path cleanup or no-clobber failed: '+repr(result))
+        print('FAILURE_INJECTED_WINDOWS_CLEANUP='+json.dumps(result,ensure_ascii=True),flush=True)
+    finally:
+        router.ssh,router.run=oldssh,oldrun
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--shell',choices=('powershell.exe','pwsh.exe'),required=True)
@@ -226,6 +288,7 @@ def main():
                 sftp_result=test_sftp(base,sftp_client,sftp_server)
                 print('SFTP_DIRECT='+json.dumps(sftp_result,ensure_ascii=True),flush=True)
                 test_sftp_and_powershell_longpath_consistency(base,args.shell,sftp_client,sftp_server)
+                test_failure_injected_remote_cleanup(base,args.shell,sftp_client,sftp_server)
             except Exception as error:
                 print('SFTP_DIRECT_ERROR='+type(error).__name__+': '+str(error)[-800:],flush=True)
                 raise
