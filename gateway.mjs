@@ -25,6 +25,16 @@ const deviceConfigFile = resolve(deviceConfigRoot, 'devices.json');
 const requireToolAllowlist = process.env.DC_REQUIRE_TOOL_ALLOWLIST === '1';
 const router = resolve(root, 'router.py');
 const windowsCmd = process.env.DC_WINDOWS_LAUNCHER || 'C:\\DeckCommander\\start-dc.cmd';
+// Optional operator-controlled shorter timeout; never extend the original 310s cap.
+const transferTimeoutMs = (() => {
+  const value = process.env.DC_TRANSFER_TIMEOUT_MS;
+  if (value === undefined || value === '') return 310000;
+  if (!/^[0-9]{1,6}$/.test(value)) throw Error('Invalid DC_TRANSFER_TIMEOUT_MS');
+  const ms = Number(value);
+  if (!Number.isSafeInteger(ms) || ms < 250 || ms > 310000)
+    throw Error('DC_TRANSFER_TIMEOUT_MS must be 250..310000');
+  return ms;
+})();
 const backends = {
   steamdeck: {
     command: process.env.DC_STEAMDECK_NODE || process.execPath,
@@ -263,7 +273,7 @@ async function invokeRouter(args, folder=false, resumable=false) {
     return await runIsolatedProcess('/usr/bin/python3',cliArgs,{
       // The entire locally-started Python/SSH/SFTP process group is bounded.
       // The 5-minute operation envelope retains a 10-second safety margin.
-      timeoutMs:310000,graceMs:300,maxOutputBytes:20000,signal
+      timeoutMs:transferTimeoutMs,graceMs:300,maxOutputBytes:20000,signal
     });
   });
   return result.stdout;

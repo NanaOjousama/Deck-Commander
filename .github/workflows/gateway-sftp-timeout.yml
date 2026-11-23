@@ -1,0 +1,34 @@
+name: Isolated MCP gateway real SFTP timeout and revocation
+on:
+  push:
+    branches:
+      - security/gateway-sftp-integration-20261122
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gateway-sftp-integrated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Ensure local OpenSSH SFTP server binary for disposable test
+        run: |
+          if ! test -x /usr/lib/openssh/sftp-server && ! test -x /usr/lib/ssh/sftp-server; then
+            sudo apt-get update -qq
+            sudo apt-get install -y openssh-sftp-server
+          fi
+          test -x /usr/bin/sftp
+      - name: Install declared Node dependencies without lifecycle scripts
+        run: npm install --ignore-scripts --no-audit --no-fund --no-package-lock --no-save
+      - name: Verify gateway process control and authorization logic
+        run: |
+          node --check gateway.mjs
+          node --check process_tree.mjs
+          node --test tests/test_transfer_timeout_config.mjs tests/test_gateway_access.mjs tests/test_gateway_runtime.mjs tests/test_process_tree.mjs tests/test_transfer_registry.mjs
+      - name: Verify real local SFTP through MCP gateway timeout and revocation
+        run: |
+          node --test --test-concurrency=1 tests/test_gateway_sftp_timeout.mjs tests/test_gateway_sftp_revocation.mjs
