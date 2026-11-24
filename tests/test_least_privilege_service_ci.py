@@ -87,9 +87,10 @@ def main():
             call('sudo','-n','useradd','--system','--no-create-home','--shell','/usr/sbin/nologin',
                  '--user-group',user)
             created_user=True
-            for dirname in ('','bin','tests','tests/fixtures'):
+            for dirname in ('','bin','service','tests','tests/fixtures'):
                 call('sudo','-n','install','-d','-m','0755',str(app/dirname))
             for source in ('gateway.mjs','router.py','service_layout.mjs','process_tree.mjs',
+                           'service/check_installation.py',
                            'tests/fixtures/timeout_sftp_router.py',
                            'tests/fixtures/systemd_gateway_parent.mjs',
                            'tests/fixtures/supervised_connector_parent.mjs'):
@@ -134,7 +135,8 @@ def main():
                  'import json,os,sys;fd=os.open(sys.argv[1],os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);'
                  'os.write(fd,json.dumps(json.loads(sys.argv[2])).encode());os.close(fd)',
                  str(state/'devices.json'),json.dumps(config))
-            checked=call(PYTHON,str(ROOT/'service/check_installation.py'),
+            checked=call('sudo','-n','-u',user,'/usr/bin/python3',
+                         str(app/'service/check_installation.py'),
                  '--app-root',str(app),'--state-root',str(state),
                  '--service-user',user,'--connector-entrypoint',str(wrapper)).stdout
             if 'PASS:' not in checked:raise AssertionError('Read-only preflight did not pass')
