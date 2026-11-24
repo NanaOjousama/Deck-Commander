@@ -1,0 +1,16 @@
+name: Disposable systemd service upgrade rehearsal
+on:
+  push:
+    branches:
+      - security/release-rollback-rehearsal-20261124
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  service-upgrade:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rehearse actual unit installation, upgrade, rollback and removal
+        run: python3 tests/service_upgrade_ci.py
