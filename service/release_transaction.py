@@ -21,6 +21,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import tempfile
 import uuid
 
 SOURCE_FILES = (
@@ -67,8 +68,13 @@ def _serialized(root):
 
 def _private_root(root):
     path = Path(root)
-    if not path.is_absolute() or str(path) in ('/', '/tmp', '/var', '/var/lib'):
-        raise ReleaseRejected('Rehearsal root must be a specific absolute sandbox directory')
+    # The rehearsal must never be mistaken for an installer and pointed at
+    # ~/.ssh, /var/lib or another real state directory. Restrict it to
+    # specifically named children of the system temporary directory.
+    scratch = Path(tempfile.gettempdir()).resolve()
+    if (not path.is_absolute() or not path.name.startswith('dc-release-sandbox-') or
+            path.parent.resolve() != scratch):
+        raise ReleaseRejected('Only a named temporary dc-release-sandbox-* directory is supported')
     try:
         metadata = path.lstat()
     except FileNotFoundError as error:

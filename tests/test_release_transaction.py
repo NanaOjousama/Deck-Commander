@@ -106,6 +106,11 @@ class ReleaseTests(unittest.TestCase):
         for bad in ('.','..','../../etc','../r2','sub/folder','x y','',None,'a'*49):
             with self.subTest(bad=bad):
                 with self.assertRaises(rt.ReleaseRejected):self.stage(bad)
+        # Even a private directory is not a valid rehearsal target unless it
+        # was specifically named and created under the OS temporary directory.
+        unrelated=self.root/'unrelated-private-directory'
+        unrelated.mkdir(mode=0o700)
+        with self.assertRaises(rt.ReleaseRejected):rt.inspect(unrelated)
         os.chmod(self.root,0o755)
         with self.assertRaises(rt.ReleaseRejected):self.stage('r1')
 
