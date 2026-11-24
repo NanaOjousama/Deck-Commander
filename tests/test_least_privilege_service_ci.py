@@ -89,8 +89,9 @@ def main():
             created_user=True
             for dirname in ('','bin','service','tests','tests/fixtures'):
                 call('sudo','-n','install','-d','-m','0755',str(app/dirname))
-            for source in ('gateway.mjs','router.py','service_layout.mjs','process_tree.mjs',
-                           'service/check_installation.py',
+            for source in ('gateway.mjs','gateway_access.mjs','router.py',
+                           'service_layout.mjs','process_tree.mjs','transfer_registry.mjs',
+                           'package.json','service/check_installation.py',
                            'tests/fixtures/timeout_sftp_router.py',
                            'tests/fixtures/systemd_gateway_parent.mjs',
                            'tests/fixtures/supervised_connector_parent.mjs'):

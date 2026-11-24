@@ -31,5 +31,15 @@ export function checkStrictLayout(layout, env, {uid=process.getuid?.(),lstat=lst
       throw Error('State directory must be owned by service account and private');
     }
   }
+  // A private directory alone is not enough if one code file is service-
+  // writable. Require root-owned, immutable entrypoints and routing modules.
+  for(const name of ['gateway.mjs','gateway_access.mjs','service_layout.mjs',
+    'process_tree.mjs','transfer_registry.mjs','router.py','package.json']) {
+    const path=resolve(layout.appRoot,name);
+    const info=lstat(path);
+    if(!info.isFile() || info.isSymbolicLink() || info.uid!==0 ||
+       (info.mode&0o022) || realpath(path)!==path)
+      throw Error('Strict application source must be root-owned and read-only: '+name);
+  }
   return layout;
 }
