@@ -1,0 +1,38 @@
+name: Disposable least-privilege connector supervision
+on:
+  push:
+    branches:
+      - security/least-privilege-service-20261123
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-service:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Verify disposable host prerequisites
+        run: |
+          test "$(cat /proc/1/comm)" = systemd
+          sudo -n true
+          if ! test -x /usr/lib/openssh/sftp-server && ! test -x /usr/lib/ssh/sftp-server; then
+            sudo apt-get update -qq
+            sudo apt-get install -y openssh-sftp-server
+          fi
+          test -x /usr/bin/sftp
+      - name: Unit renderer, layout and existing Python tests
+        run: |
+          node --check gateway.mjs
+          node --check service_layout.mjs
+          node --test tests/test_service_layout.mjs
+          python -m unittest discover -s tests -p 'test_*.py' -q
+      - name: Fresh non-admin systemd service and forced crash cleanup
+        timeout-minutes: 5
+        run: python tests/test_least_privilege_service_ci.py

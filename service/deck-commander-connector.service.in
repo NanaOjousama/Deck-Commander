@@ -1,0 +1,43 @@
+[Unit]
+Description=Deck-Commander supervised connector (authorization external; no auto-pairing)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The connector must spawn the MCP stdio gateway as its own child in this unit.
+# This unit does NOT invoke gateway.mjs directly, which would sever MCP stdio.
+Type=exec
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+WorkingDirectory=@APP_ROOT@
+ExecStart=@CONNECTOR_ENTRYPOINT@
+Environment=DC_APP_ROOT=@APP_ROOT@
+Environment=DC_HOME=/var/lib/@STATE_NAME@
+Environment=DC_STRICT_DEPLOYMENT=1
+Environment=DC_REQUIRE_TOOL_ALLOWLIST=1
+Environment=HOME=/var/lib/@STATE_NAME@
+Environment=XDG_CONFIG_HOME=/var/lib/@STATE_NAME@/config
+Environment=XDG_CACHE_HOME=/var/lib/@STATE_NAME@/cache
+StateDirectory=@STATE_NAME@
+StateDirectoryMode=0700
+UMask=0077
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+KillMode=control-group
+SendSIGKILL=yes
+TimeoutStopSec=3s
+Restart=no
+
+[Install]
+# Do not enable before separate connector authentication / fresh-install gates.
+WantedBy=multi-user.target

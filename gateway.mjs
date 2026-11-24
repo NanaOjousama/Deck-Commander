@@ -11,14 +11,17 @@ import { spawn } from 'node:child_process';
 import { runIsolatedProcess } from './process_tree.mjs';
 import { TransferRegistry } from './transfer_registry.mjs';
 import { isIP } from 'node:net';
-import { homedir, networkInterfaces } from 'node:os';
+import { networkInterfaces } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { assertDeviceEnabled, devicesForCall, requireDeviceName, watchDeviceRevocation } from './gateway_access.mjs';
 import { fileURLToPath } from 'node:url';
+import {resolveLayout, checkStrictLayout} from './service_layout.mjs';
 
-const root = process.env.DC_HOME || dirname(fileURLToPath(import.meta.url));
-// Same default pairing directory as router.py/pair_windows.py.
-const deviceConfigRoot = process.env.DC_HOME || resolve(homedir(), '.local/share/deck-commander-multidevice');
+// Optional dedicated app path separates read-only source from mutable state.
+// Personal DC_HOME-only installations retain their exact original root behavior.
+const layout = checkStrictLayout(resolveLayout(process.env, dirname(fileURLToPath(import.meta.url))),process.env);
+const root = layout.appRoot;
+const deviceConfigRoot = layout.stateRoot;
 const deviceConfigFile = resolve(deviceConfigRoot, 'devices.json');
 // A customer-style gateway requires an explicit permitted-tool list per
 // device. Legacy trusted single-user installs remain compatible by default.
@@ -43,7 +46,7 @@ const backends = {
   },
   windows: {
     command: process.env.DC_WINDOWS_SSH_BINARY || '/usr/bin/ssh', // trusted local launch configuration only
-    args: ['-F', root + '/ssh_config', '-T', 'dc-windows', 'cmd.exe', '/d', '/c', windowsCmd],
+    args: ['-F', deviceConfigRoot + '/ssh_config', '-T', 'dc-windows', 'cmd.exe', '/d', '/c', windowsCmd],
     client: null, connecting: null, transport: null, retryAfter: 0
   }
 };
@@ -166,7 +169,7 @@ async function getBackend(device) {
         b.retryAfter = Date.now() + windowsOfflineRetryMs;
         throw error;
       }
-      backendArgs = ['-F', root + '/ssh_config', '-T', '-o', 'HostName=' + address,
+      backendArgs = ['-F', deviceConfigRoot + '/ssh_config', '-T', '-o', 'HostName=' + address,
         'dc-windows', 'cmd.exe', '/d', '/c', windowsCmd];
     }
     const client = new Client({name:'deck-commander-router-' + device, version:'0.1.0'}, {capabilities:{}});
