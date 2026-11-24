@@ -1,0 +1,23 @@
+name: Safe release staging and rollback rehearsal
+on:
+  push:
+    branches:
+      - security/release-rollback-rehearsal-20261124
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  release-rehearsal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Check fixed source allowlist and non-deploying release transaction code
+        run: |
+          python -m py_compile service/release_transaction.py
+          python -m unittest discover -s tests -p 'test_release_*.py' -v
+      - name: Confirm all previous Python regressions
+        run: python -m unittest discover -s tests -p 'test_*.py' -q
