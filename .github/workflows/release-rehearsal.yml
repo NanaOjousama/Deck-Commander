@@ -1,0 +1,25 @@
+name: Release staging and rollback rehearsal
+
+on:
+  push:
+    branches:
+      - security/release-rollback-rehearsal-20261124
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rehearsal:
+    name: Disposable Linux release rehearsal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run release staging, rollback and concurrency tests
+        run: python -m unittest discover -s tests -p 'test_release_*.py' -v
+      - name: Run existing offline regression suite
+        run: python -m unittest discover -s tests -p 'test_*.py'
