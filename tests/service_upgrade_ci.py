@@ -3,6 +3,8 @@
 Not an installer; no production credentials, network service or user data.
 """
 import hashlib
+import json
+import signal
 import os
 from pathlib import Path
 import secrets
@@ -135,6 +137,45 @@ def main():
             select("v2")
             require(start().returncode == 0 and health("v2"), "Rollback failed")
             require(snapshot() == before, "State modified by rollback")
+            # Simulate a controller crash across real service transitions.
+            # The receipt belongs to the operator, outside service-writable state.
+            pending = scratch / "pending.json"
+            def record_pending():
+                with pending.open("x") as handle:
+                    json.dump({"previous": "v2", "candidate": "v1"}, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                fd = os.open(scratch, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            def recover():
+                require(json.loads(pending.read_text()) ==
+                        {"previous": "v2", "candidate": "v1"}, "Invalid fixture receipt")
+                stop()
+                select("v2")
+                require(start().returncode == 0 and health("v2"), "Crash rollback failed")
+                require(snapshot() == before, "Crash rollback modified private state")
+                pending.unlink()
+            for phase in ("stopped", "selected", "started"):
+                record_pending()
+                pid = os.fork()
+                if pid == 0:
+                    try:
+                        stop()
+                        if phase != "stopped":
+                            select("v1")
+                        if phase == "started":
+                            require(start().returncode == 0 and health("v1"), "Candidate failed")
+                        os.kill(os.getpid(), signal.SIGKILL)
+                    except BaseException:
+                        os._exit(99)
+                _, result = os.waitpid(pid, 0)
+                require(os.WIFSIGNALED(result) and os.WTERMSIG(result) == signal.SIGKILL,
+                        "Controller did not reach intended crash point")
+                recover()
+                print("PASS: controller SIGKILL after " + phase + "; prior service recovered", flush=True)
             require(other.poll() is None, "Unrelated process stopped")
             stop()
             # Rehearse removing only the service registration, retaining state and versions.
