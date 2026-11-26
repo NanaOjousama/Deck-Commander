@@ -62,10 +62,15 @@ def main():
             while time.monotonic() < deadline:
                 if status() == "active":
                     try:
-                        if read("health").strip() == version:
+                        invocation = call("sudo", "-n", "systemctl", "show", "-p", "InvocationID",
+                                          "--value", unit).stdout.strip()
+                        if invocation and read("health").strip() == version + " " + invocation:
                             pid = int(call("sudo", "-n", "systemctl", "show", "-p", "MainPID",
                                            "--value", unit).stdout)
-                            if pid > 0 and unit in Path(f"/proc/{pid}/cgroup").read_text():
+                            if (pid > 0 and unit in Path(f"/proc/{pid}/cgroup").read_text()
+                                    and status() == "active"
+                                    and call("sudo", "-n", "systemctl", "show", "-p", "InvocationID",
+                                             "--value", unit).stdout.strip() == invocation):
                                 return True
                     except (OSError, RuntimeError, ValueError):
                         pass
@@ -108,7 +113,7 @@ def main():
                 if version == "broken":
                     body += "exit 42\n"
                 else:
-                    body += ('printf "%s\\n" "' + version + '" > "$DC_HOME/health.tmp"\n'
+                    body += ('printf "%s %s\\n" "' + version + '" "$INVOCATION_ID" > "$DC_HOME/health.tmp"\n'
                              'mv "$DC_HOME/health.tmp" "$DC_HOME/health"\n'
                              'exec /usr/bin/sleep 120\n')
                 source.write_text(body)

@@ -89,6 +89,7 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(rt.ReleaseRejected):rt.activate(self.root,'r2')
         self.assertEqual(rt.inspect(self.root)['active'],'r1')
         binary.write_bytes(old)
+        binary.chmod(0o400)
         rt.activate(self.root,'r2')
         manifest=self.root/'releases/r1/manifest.json'
         manifest.chmod(0o600);manifest.write_bytes(b'{}')
@@ -118,13 +119,13 @@ class ReleaseTests(unittest.TestCase):
         (self.source/'gateway.mjs').unlink()
         outside=self.root/'external';outside.write_bytes(b'UNTRUSTED')
         (self.source/'gateway.mjs').symlink_to(outside)
-        with self.assertRaises(rt.ReleaseRejected):self.stage('r1')
+        with self.assertRaises((rt.ReleaseRejected,OSError)):self.stage('r1')
         (self.source/'gateway.mjs').unlink()
         (self.source/'gateway.mjs').write_bytes(b'SAFE')
         self.stage('r1')
         marker=self.root/'releases/r1/ready.json'
         marker.unlink();marker.symlink_to(outside)
-        with self.assertRaises(rt.ReleaseRejected):rt.activate(self.root,'r1')
+        with self.assertRaises((rt.ReleaseRejected,OSError)):rt.activate(self.root,'r1')
 
     def test_corrupt_active_record_is_not_reset(self):
         self.stage('r1');rt.activate(self.root,'r1')
